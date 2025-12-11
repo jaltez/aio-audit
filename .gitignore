@@ -1,0 +1,9 @@
+__pycache__/
+.env
+.scrapy/
+.venv/
+*.log
+*.py[cod]
+*$py.class
+output.json
+reports/

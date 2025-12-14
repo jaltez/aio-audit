@@ -1,0 +1,5 @@
+audit:
+  start_urls:
+    - https://books.toscrape.com/
+  max_depth: 2
+  max_pages: 10

@@ -54,3 +54,6 @@ urllib3==2.6.1
 w3lib==2.3.1
 zope.interface==8.1.1
 PyYAML>=6.0
+streamlit
+pandas
+plotly

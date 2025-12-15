@@ -60,6 +60,15 @@ cd ai_seo_auditor
 scrapy crawl audit
 ```
 
+### View Reports (Dashboard)
+
+Start the interactive dashboard to visualize audit results:
+
+```bash
+# From the project root
+streamlit run dashboard.py
+```
+
 ## Architecture
 
 - **Scrapy**: Crawling framework.

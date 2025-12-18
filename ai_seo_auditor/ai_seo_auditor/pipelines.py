@@ -1,5 +1,5 @@
 import json
-import time
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
 from itemadapter import ItemAdapter
@@ -13,7 +13,7 @@ class JsonReportPipeline:
         else:
             domain = "unknown_domain"
 
-        timestamp = int(time.time())
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         folder_name = f"{domain}_{timestamp}"
 
         self.reports_dir = Path("reports") / folder_name

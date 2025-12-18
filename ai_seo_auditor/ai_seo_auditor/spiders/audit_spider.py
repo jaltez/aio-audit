@@ -4,8 +4,9 @@ from pathlib import Path
 from scrapy.linkextractors import LinkExtractor
 from scrapy_playwright.page import PageMethod
 from urllib.parse import urlparse
+from bs4 import BeautifulSoup
 from ai_seo_auditor.services.llm_service import analyze_with_ollama
-from ai_seo_auditor.models.schemas import PageAudit
+from ai_seo_auditor.models.schemas import PageAudit, MetaTags, HeaderStructure, ImageStats
 
 class AuditSpider(scrapy.Spider):
     name = "audit"
@@ -65,29 +66,57 @@ class AuditSpider(scrapy.Spider):
         self.logger.info(f"Auditing {response.url} (Page {self.pages_analyzed}/{self.max_pages})")
 
         # 1. Prepare Data
-        # Truncate HTML strictly to keep within context limits
-        # In a real scenario, we'd use BeautifulSoup to clean script/style tags first
-        html_snippet = response.css("body").get()
-        if html_snippet:
-            html_snippet = html_snippet[:15000]
-        else:
-            html_snippet = ""
+        # Use BeautifulSoup to clean HTML
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # Remove script, style, svg, noscript, and iframe tags to save tokens
+        for tag in soup(["script", "style", "svg", "noscript", "iframe"]):
+            tag.decompose()
+            
+        # Get cleaned HTML snippet (body only)
+        body = soup.find("body")
+        html_snippet = str(body) if body else str(soup)
+        html_snippet = html_snippet[:15000]
+
+        # Extract Meta Tags
+        meta_tags = MetaTags(
+            title=response.xpath('//title/text()').get(),
+            description=response.xpath('//meta[@name="description"]/@content').get(),
+            canonical=response.xpath('//link[@rel="canonical"]/@href').get(),
+            og_title=response.xpath('//meta[@property="og:title"]/@content').get(),
+            og_description=response.xpath('//meta[@property="og:description"]/@content').get()
+        )
+
+        # Extract Header Structure
+        headers = HeaderStructure(
+            h1=response.xpath('//h1/text()').getall(),
+            h2=response.xpath('//h2/text()').getall(),
+            h3=response.xpath('//h3/text()').getall(),
+            h4_h6_count=len(response.xpath('//h4 | //h5 | //h6').getall())
+        )
+
+        # Extract Image Stats
+        images = response.xpath('//img')
+        total_images = len(images)
+        missing_alt = len(response.xpath('//img[not(@alt) or @alt=""]').getall())
+        image_stats = ImageStats(total_images=total_images, missing_alt=missing_alt)
 
         # Extract JSON-LD
         json_ld = response.xpath('//script[@type="application/ld+json"]/text()').getall()
 
         # Extract text content
-        # Simple extraction: strict text from P tags
-        text_content = " ".join(response.css("p::text").getall())[:5000]
+        text_content = " ".join(soup.stripped_strings)[:5000]
 
         # 2. Call AI Service (Async)
-        # We pass the raw data to our LLM service wrapper
         try:
             audit_result = await analyze_with_ollama(
                 url=response.url,
                 html=html_snippet,
                 json_ld=json_ld,
-                text=text_content
+                text=text_content,
+                meta_tags=meta_tags,
+                headers=headers,
+                image_stats=image_stats
             )
 
             # 3. Yield the validated Pydantic model

@@ -1,10 +1,14 @@
+import hashlib
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
 from itemadapter import ItemAdapter
 
 class JsonReportPipeline:
+    _invalid_filename_chars = re.compile(r"[<>:\"/\\|?*]+")
+
     def open_spider(self, spider):
         # Determine root domain from the first start_url
         if hasattr(spider, 'start_urls') and spider.start_urls:
@@ -25,11 +29,7 @@ class JsonReportPipeline:
         adapter = ItemAdapter(item)
         url = adapter.get("url", "unknown_url")
 
-        # Simple sanitization of URL for filename
-        safe_name = url.replace("https://", "").replace("http://", "").replace("/", "_").replace(":", "")
-        # Remove potentially too long filename issues if needed, or keep it simple
-        if len(safe_name) > 200:
-            safe_name = safe_name[:200]
+        safe_name = self._build_safe_filename(url)
 
         filename = self.reports_dir / f"{safe_name}.json"
 
@@ -38,3 +38,16 @@ class JsonReportPipeline:
 
         spider.logger.info(f"Saved audit report for {url} to {filename}")
         return item
+
+    def _build_safe_filename(self, url: str) -> str:
+        sanitized = self._invalid_filename_chars.sub("_", url)
+        sanitized = sanitized.replace("http://", "").replace("https://", "")
+        sanitized = sanitized.replace(" ", "_")
+        sanitized = re.sub(r"_+", "_", sanitized).strip("._-") or "report"
+
+        url_hash = hashlib.sha256(url.encode("utf-8")).hexdigest()[:10]
+        max_base_length = 180
+        if len(sanitized) > max_base_length:
+            sanitized = sanitized[:max_base_length].rstrip("._-")
+
+        return f"{sanitized}-{url_hash}"

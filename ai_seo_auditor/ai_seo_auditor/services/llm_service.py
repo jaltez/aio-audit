@@ -1,3 +1,4 @@
+import asyncio
 import os
 import json
 from openai import AsyncOpenAI
@@ -10,6 +11,7 @@ load_dotenv()
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
 OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY", "ollama")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3:8b")
+OLLAMA_TIMEOUT_SECONDS = float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "60"))
 
 client = AsyncOpenAI(base_url=OLLAMA_BASE_URL, api_key=OLLAMA_API_KEY)
 
@@ -67,13 +69,16 @@ async def analyze_with_ollama(
     """
 
     try:
-        response = await client.chat.completions.create(
-            model=OLLAMA_MODEL,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_msg}
-            ],
-            response_format={"type": "json_object"}
+        response = await asyncio.wait_for(
+            client.chat.completions.create(
+                model=OLLAMA_MODEL,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": user_msg},
+                ],
+                response_format={"type": "json_object"},
+            ),
+            timeout=OLLAMA_TIMEOUT_SECONDS,
         )
 
         raw_json = response.choices[0].message.content
@@ -82,16 +87,24 @@ async def analyze_with_ollama(
 
         # Parse the response to ensure we can inject the extracted data if the LLM missed it
         data = json.loads(raw_json)
-        data["url"] = url
-        data["meta_tags"] = meta_tags.model_dump()
-        data["headers"] = headers.model_dump()
-        data["image_stats"] = image_stats.model_dump()
+    except (asyncio.TimeoutError, ValueError, json.JSONDecodeError) as exc:
+        fallback_issue = {
+            "severity": "high",
+            "description": f"LLM analysis failed: {exc}",
+            "suggested_fix": "Retry the audit or inspect the LLM service logs.",
+        }
+        data = {
+            "semantic_analysis": {"score": 0, "issues": [fallback_issue]},
+            "schema_analysis": {"score": 0, "detected_types": [], "missing_fields": []},
+            "content_analysis": {"score": 0, "has_direct_answer": False, "answer_snippet": None},
+        }
+    except Exception as exc:
+        raise exc
 
-        # Validate with Pydantic
-        return PageAudit.model_validate(data)
-    except Exception as e:
-        # In a real scenario, we might want to return a partial result or retry
-        print(f"Error analyzing {url}: {e}")
-        # Return a dummy object or re-raise
-        # For now, re-raising to see errors during development
-        raise e
+    data["url"] = url
+    data["meta_tags"] = meta_tags.model_dump()
+    data["headers"] = headers.model_dump()
+    data["image_stats"] = image_stats.model_dump()
+
+    # Validate with Pydantic
+    return PageAudit.model_validate(data)

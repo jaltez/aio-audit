@@ -1,12 +1,13 @@
+import copy
 import scrapy
 import yaml
+from lxml import etree
 from pathlib import Path
 from scrapy.linkextractors import LinkExtractor
 from scrapy_playwright.page import PageMethod
 from urllib.parse import urlparse
-from bs4 import BeautifulSoup
 from ai_seo_auditor.services.llm_service import analyze_with_ollama
-from ai_seo_auditor.models.schemas import PageAudit, MetaTags, HeaderStructure, ImageStats
+from ai_seo_auditor.models.schemas import MetaTags, HeaderStructure, ImageStats
 
 class AuditSpider(scrapy.Spider):
     name = "audit"
@@ -39,8 +40,8 @@ class AuditSpider(scrapy.Spider):
         if hasattr(self, "url"):
             self.start_urls = [self.url]
 
-        # Set allowed_domains dynamically based on input URLs
-        self.allowed_domains = list({urlparse(url).netloc for url in self.start_urls})
+        # Set allowed_domains dynamically based on input URLs, normalizing ports
+        self.allowed_domains = list({urlparse(url).hostname for url in self.start_urls if urlparse(url).hostname})
 
     def start_requests(self):
         self.logger.info(f"Starting audit with max_depth={self.max_depth}")
@@ -66,16 +67,16 @@ class AuditSpider(scrapy.Spider):
         self.logger.info(f"Auditing {response.url} (Page {self.pages_analyzed}/{self.max_pages})")
 
         # 1. Prepare Data
-        # Use BeautifulSoup to clean HTML
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # Remove script, style, svg, noscript, and iframe tags to save tokens
-        for tag in soup(["script", "style", "svg", "noscript", "iframe"]):
-            tag.decompose()
-            
-        # Get cleaned HTML snippet (body only)
-        body = soup.find("body")
-        html_snippet = str(body) if body else str(soup)
+        # Use Scrapy's parsed document to avoid double parsing.
+        cleaned_root = copy.deepcopy(response.selector.root)
+        for element in cleaned_root.xpath("//script | //style | //svg | //noscript | //iframe"):
+            parent = element.getparent()
+            if parent is not None:
+                parent.remove(element)
+
+        body_nodes = cleaned_root.xpath("//body")
+        body = body_nodes[0] if body_nodes else cleaned_root
+        html_snippet = etree.tostring(body, encoding="unicode", method="html")
         html_snippet = html_snippet[:15000]
 
         # Extract Meta Tags
@@ -105,7 +106,8 @@ class AuditSpider(scrapy.Spider):
         json_ld = response.xpath('//script[@type="application/ld+json"]/text()').getall()
 
         # Extract text content
-        text_content = " ".join(soup.stripped_strings)[:5000]
+        text_content = " ".join(text.strip() for text in body.itertext() if text and text.strip())
+        text_content = text_content[:5000]
 
         # 2. Call AI Service (Async)
         try:

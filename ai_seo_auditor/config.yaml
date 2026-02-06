@@ -3,3 +3,5 @@ audit:
     - https://books.toscrape.com/
   max_depth: 2
   max_pages: 10
+  llm_timeout_seconds: 60
+  llm_retry_attempts: 2

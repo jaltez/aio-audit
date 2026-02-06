@@ -1,6 +1,7 @@
 import asyncio
-import os
 import json
+import os
+from typing import Optional
 from openai import AsyncOpenAI
 from dotenv import load_dotenv
 from ai_seo_auditor.models.schemas import PageAudit, MetaTags, HeaderStructure, ImageStats
@@ -12,6 +13,8 @@ OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
 OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY", "ollama")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3:8b")
 OLLAMA_TIMEOUT_SECONDS = float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "60"))
+OLLAMA_RETRY_ATTEMPTS = int(os.getenv("OLLAMA_RETRY_ATTEMPTS", "2"))
+OLLAMA_RETRY_BASE_DELAY_SECONDS = float(os.getenv("OLLAMA_RETRY_BASE_DELAY_SECONDS", "1"))
 
 client = AsyncOpenAI(base_url=OLLAMA_BASE_URL, api_key=OLLAMA_API_KEY)
 
@@ -21,13 +24,16 @@ You strictly output JSON matching the requested schema.
 """
 
 async def analyze_with_ollama(
-    url: str, 
-    html: str, 
-    json_ld: list, 
+    url: str,
+    html: str,
+    json_ld: list,
     text: str,
     meta_tags: MetaTags,
     headers: HeaderStructure,
-    image_stats: ImageStats
+    image_stats: ImageStats,
+    timeout_seconds: Optional[float] = None,
+    retry_attempts: Optional[int] = None,
+    logger=None,
 ) -> PageAudit:
     """
     Analyzes the page content using Ollama and returns a validated PageAudit object.
@@ -68,29 +74,50 @@ async def analyze_with_ollama(
     Ensure all scores are integers between 0 and 100.
     """
 
-    try:
-        response = await asyncio.wait_for(
-            client.chat.completions.create(
-                model=OLLAMA_MODEL,
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": user_msg},
-                ],
-                response_format={"type": "json_object"},
-            ),
-            timeout=OLLAMA_TIMEOUT_SECONDS,
-        )
+    timeout_seconds = timeout_seconds if timeout_seconds is not None else OLLAMA_TIMEOUT_SECONDS
+    retry_attempts = retry_attempts if retry_attempts is not None else OLLAMA_RETRY_ATTEMPTS
+    last_error: Optional[Exception] = None
 
-        raw_json = response.choices[0].message.content
-        if not raw_json:
-            raise ValueError("Empty response from LLM")
+    for attempt in range(retry_attempts + 1):
+        try:
+            response = await asyncio.wait_for(
+                client.chat.completions.create(
+                    model=OLLAMA_MODEL,
+                    messages=[
+                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "user", "content": user_msg},
+                    ],
+                    response_format={"type": "json_object"},
+                ),
+                timeout=timeout_seconds,
+            )
 
-        # Parse the response to ensure we can inject the extracted data if the LLM missed it
-        data = json.loads(raw_json)
-    except (asyncio.TimeoutError, ValueError, json.JSONDecodeError) as exc:
+            raw_json = response.choices[0].message.content
+            if not raw_json:
+                raise ValueError("Empty response from LLM")
+
+            # Parse the response to ensure we can inject the extracted data if the LLM missed it
+            data = json.loads(raw_json)
+            break
+        except (asyncio.TimeoutError, ValueError, json.JSONDecodeError) as exc:
+            last_error = exc
+            if logger:
+                logger.warning(
+                    "LLM request failed on attempt %s/%s for %s: %s",
+                    attempt + 1,
+                    retry_attempts + 1,
+                    url,
+                    exc,
+                )
+            if attempt < retry_attempts:
+                await asyncio.sleep(OLLAMA_RETRY_BASE_DELAY_SECONDS * (2**attempt))
+            else:
+                break
+
+    if last_error is not None and "data" not in locals():
         fallback_issue = {
             "severity": "high",
-            "description": f"LLM analysis failed: {exc}",
+            "description": f"LLM analysis failed: {last_error}",
             "suggested_fix": "Retry the audit or inspect the LLM service logs.",
         }
         data = {
@@ -98,8 +125,6 @@ async def analyze_with_ollama(
             "schema_analysis": {"score": 0, "detected_types": [], "missing_fields": []},
             "content_analysis": {"score": 0, "has_direct_answer": False, "answer_snippet": None},
         }
-    except Exception as exc:
-        raise exc
 
     data["url"] = url
     data["meta_tags"] = meta_tags.model_dump()

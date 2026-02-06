@@ -110,6 +110,9 @@ class AuditSpider(scrapy.Spider):
         text_content = text_content[:5000]
 
         # 2. Call AI Service (Async)
+        audit_config = self.config.get("audit", {})
+        timeout_seconds = float(audit_config.get("llm_timeout_seconds", 60))
+        retry_attempts = int(audit_config.get("llm_retry_attempts", 2))
         try:
             audit_result = await analyze_with_ollama(
                 url=response.url,
@@ -118,7 +121,10 @@ class AuditSpider(scrapy.Spider):
                 text=text_content,
                 meta_tags=meta_tags,
                 headers=headers,
-                image_stats=image_stats
+                image_stats=image_stats,
+                timeout_seconds=timeout_seconds,
+                retry_attempts=retry_attempts,
+                logger=self.logger,
             )
 
             # 3. Yield the validated Pydantic model

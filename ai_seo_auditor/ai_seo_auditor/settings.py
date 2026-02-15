@@ -75,17 +75,18 @@ ITEM_PIPELINES = {
 # Enable showing throttling stats for every response received:
 #AUTOTHROTTLE_DEBUG = False
 
-# Enable and configure HTTP caching (disabled by default)
-# See https://docs.scrapy.org/en/latest/topics/downloader-middleware.html#httpcache-middleware-settings
-#HTTPCACHE_ENABLED = True
-#HTTPCACHE_EXPIRATION_SECS = 0
-#HTTPCACHE_DIR = "httpcache"
+# Enable HTTP caching to avoid re-fetching pages during development.
+# Disable in production for fresh results.
+HTTPCACHE_ENABLED = True
+HTTPCACHE_EXPIRATION_SECS = 3600  # 1 hour
+HTTPCACHE_DIR = "httpcache"
 #HTTPCACHE_IGNORE_HTTP_CODES = []
 #HTTPCACHE_STORAGE = "scrapy.extensions.httpcache.FilesystemCacheStorage"
 
 # Set settings whose default value is deprecated to a future-proof value
-# Set settings whose default value is deprecated to a future-proof value
 FEED_EXPORT_ENCODING = "utf-8"
+
+LOG_LEVEL = "INFO"
 
 # Playwright Settings
 DOWNLOAD_HANDLERS = {
@@ -100,6 +101,8 @@ PLAYWRIGHT_LAUNCH_OPTIONS = {
     "timeout": 20000,  # 20 seconds
 }
 
-# Concurrency to avoid high memory usage with Playwright
+# Note: CONCURRENT_REQUESTS_PER_DOMAIN = 1 (above) effectively serializes
+# requests for single-domain audits regardless of this global setting.
+# Increase CONCURRENT_REQUESTS_PER_DOMAIN if you want true parallelism.
 CONCURRENT_REQUESTS = 4
 

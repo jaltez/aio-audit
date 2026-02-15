@@ -5,3 +5,7 @@ audit:
   max_pages: 10
   llm_timeout_seconds: 60
   llm_retry_attempts: 2
+  # Maximum characters of cleaned HTML sent to the LLM
+  html_max_chars: 8000
+  # Maximum characters of extracted text sent to the LLM
+  text_max_chars: 2000

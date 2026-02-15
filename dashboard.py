@@ -42,10 +42,13 @@ selected_folder_name = st.sidebar.selectbox(
 selected_folder_path = reports_dir / selected_folder_name
 
 # Load Data
-@st.cache_data
-def load_data(folder_path):
+@st.cache_data(ttl=60)
+def load_data(folder_path: str) -> pd.DataFrame:
     data = []
-    for file_path in folder_path.glob("*.json"):
+    for file_path in Path(folder_path).glob("*.json"):
+        # Skip the aggregate summary file
+        if file_path.name.startswith("_"):
+            continue
         try:
             with open(file_path, "r", encoding="utf-8") as f:
                 report = json.load(f)
@@ -70,7 +73,7 @@ def load_data(folder_path):
         return pd.DataFrame()
     return pd.DataFrame(data)
 
-df = load_data(selected_folder_path)
+df = load_data(str(selected_folder_path))
 
 if df.empty:
     st.info("No JSON reports found in this folder.")
@@ -135,25 +138,29 @@ if selected_url:
 
     with tab1:
         st.subheader("Semantic Analysis")
-        st.progress(page_data["semantic_analysis"]["score"] / 100)
+        sem_score = page_data.get("semantic_analysis", {}).get("score", 0)
+        st.progress(max(0.0, min(1.0, sem_score / 100)))
 
-        issues = page_data["semantic_analysis"].get("issues", [])
+        issues = page_data.get("semantic_analysis", {}).get("issues", [])
         if issues:
             for i, issue in enumerate(issues):
-                with st.expander(f"{issue['severity'].upper()}: {issue.get('description', 'Issue')}"):
-                    st.write(f"**Description:** {issue.get('description')}")
-                    st.write(f"**Suggested Fix:** {issue.get('suggested_fix')}")
+                sev = issue.get('severity', 'unknown').upper()
+                desc = issue.get('description', 'Issue')
+                with st.expander(f"{sev}: {desc}"):
+                    st.write(f"**Description:** {desc}")
+                    st.write(f"**Suggested Fix:** {issue.get('suggested_fix', 'N/A')}")
         else:
             st.success("No semantic issues found!")
 
     with tab2:
         st.subheader("Schema Analysis")
-        st.progress(page_data["schema_analysis"]["score"] / 100)
+        sch_score = page_data.get("schema_analysis", {}).get("score", 0) or 0
+        st.progress(max(0.0, min(1.0, sch_score / 100)))
 
         col_s1, col_s2 = st.columns(2)
         with col_s1:
             st.write("**Detected Types:**")
-            types = page_data["schema_analysis"].get("detected_types", [])
+            types = page_data.get("schema_analysis", {}).get("detected_types", [])
             if types:
                 for t in types:
                     st.code(t, language="text")
@@ -162,7 +169,7 @@ if selected_url:
 
         with col_s2:
             st.write("**Missing Fields:**")
-            missing = page_data["schema_analysis"].get("missing_fields", [])
+            missing = page_data.get("schema_analysis", {}).get("missing_fields", [])
             if missing:
                 for m in missing:
                     st.warning(f"Missing: {m}")
@@ -171,10 +178,11 @@ if selected_url:
 
     with tab3:
         st.subheader("Content Analysis")
-        st.progress(page_data["content_analysis"]["score"] / 100)
+        cnt_score = page_data.get("content_analysis", {}).get("score", 0) or 0
+        st.progress(max(0.0, min(1.0, cnt_score / 100)))
 
-        if page_data["content_analysis"].get("has_direct_answer"):
+        if page_data.get("content_analysis", {}).get("has_direct_answer"):
             st.success("This page provides a direct answer!")
-            st.info(f"**Snippet:** {page_data['content_analysis'].get('answer_snippet')}")
+            st.info(f"**Snippet:** {page_data.get('content_analysis', {}).get('answer_snippet', 'N/A')}")
         else:
             st.warning("No direct answer structure detected.")

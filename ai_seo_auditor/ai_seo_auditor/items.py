@@ -1,12 +1,3 @@
-# Define here the models for your scraped items
-#
-# See documentation in:
-# https://docs.scrapy.org/en/latest/topics/items.html
-
-import scrapy
-
-
-class AiSeoAuditorItem(scrapy.Item):
-    # define the fields for your item here like:
-    # name = scrapy.Field()
-    pass
+# This module is intentionally empty.
+# The project uses Pydantic models from models/schemas.py (PageAudit)
+# as the de-facto item schema instead of scrapy.Item subclasses.

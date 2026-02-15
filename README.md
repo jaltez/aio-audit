@@ -17,14 +17,14 @@ An automated tool that detects "AI-readiness" gaps in web pages using Scrapy, Pl
 
 ## Setup
 
-1.  **Clone the repository:**
+1. **Clone the repository:**
 
     ```bash
     git clone <repository_url>
     cd aio-audit
     ```
 
-2.  **Create and activate a virtual environment:**
+2. **Create and activate a virtual environment:**
 
     ```bash
     # Windows
@@ -36,19 +36,39 @@ An automated tool that detects "AI-readiness" gaps in web pages using Scrapy, Pl
     source .venv/bin/activate
     ```
 
-3.  **Install dependencies:**
+3. **Install dependencies:**
 
     ```bash
-    pip install scrapy scrapy-playwright pydantic openai python-dotenv
+    pip install -r requirements.txt
     playwright install chromium
     ```
 
-4.  **Configuration:**
-    Create a `.env` file in the `ai_seo_auditor` directory (or root) based on your LLM setup.
+4. **Pull an Ollama model:**
+
+    ```bash
+    ollama pull qwen3:8b
+    ```
+
+5. **Configuration:**
+
+    Create a `.env` file in the **project root** (`aio-audit/`) with your LLM settings:
+
     ```env
     OLLAMA_BASE_URL=http://localhost:11434/v1
     OLLAMA_API_KEY=ollama
-    OLLAMA_MODEL=qwen3:8b # or any other model you have pulled in Ollama
+    OLLAMA_MODEL=qwen3:8b
+    ```
+
+    Edit `ai_seo_auditor/config.yaml` to set crawl targets and limits:
+
+    ```yaml
+    audit:
+      start_urls:
+        - "https://example.com/"
+      max_depth: 2
+      max_pages: 10
+      html_max_chars: 8000
+      text_max_chars: 2000
     ```
 
 ## Usage
@@ -58,6 +78,12 @@ Run the spider:
 ```bash
 cd ai_seo_auditor
 scrapy crawl audit
+```
+
+Override settings via CLI:
+
+```bash
+scrapy crawl audit -a url=https://example.com -a max_depth=1 -a max_pages=5
 ```
 
 ### View Reports (Dashboard)
@@ -73,5 +99,6 @@ streamlit run dashboard.py
 
 - **Scrapy**: Crawling framework.
 - **Playwright**: Headless browser for rendering JS.
-- **Pydantic**: Data validation.
-- **Ollama**: LLM inference.
+- **Pydantic**: Data validation for all LLM outputs.
+- **Ollama**: LLM inference (OpenAI-compatible API).
+- **Streamlit**: Interactive dashboard for report visualization.

@@ -39,7 +39,7 @@ class JsonReportPipeline:
 
         try:
             with open(filename, "w", encoding="utf-8") as f:
-                json.dump(adapter.asdict(), f, indent=2, ensure_ascii=False)
+                json.dump(adapter.asdict(), f, indent=2, ensure_ascii=False, default=str)
         except (TypeError, ValueError) as e:
             spider.logger.error(f"Failed to serialize report for {url}: {e}")
             return item
@@ -57,29 +57,30 @@ class JsonReportPipeline:
 
     def close_spider(self, spider: scrapy.Spider) -> None:
         """Write an aggregate site summary report."""
-        if not self._page_scores:
-            return
-
-        total = len(self._page_scores)
-
-        def avg_score(key: str) -> float:
-            return round(sum(p[key] for p in self._page_scores) / total, 1)
-
-        summary = {
-            "pages_audited": total,
-            "avg_semantic_score": avg_score("semantic_score"),
-            "avg_schema_score": avg_score("schema_score"),
-            "avg_content_score": avg_score("content_score"),
-            "pages": sorted(self._page_scores, key=lambda p: p["semantic_score"]),
-        }
-
-        summary_path = self.reports_dir / "_site_summary.json"
         try:
+            if not self._page_scores:
+                spider.logger.warning("No page scores collected — skipping site summary.")
+                return
+
+            total = len(self._page_scores)
+
+            def avg_score(key: str) -> float:
+                return round(sum(p[key] for p in self._page_scores) / total, 1)
+
+            summary = {
+                "pages_audited": total,
+                "avg_semantic_score": avg_score("semantic_score"),
+                "avg_schema_score": avg_score("schema_score"),
+                "avg_content_score": avg_score("content_score"),
+                "pages": sorted(self._page_scores, key=lambda p: p["semantic_score"]),
+            }
+
+            summary_path = self.reports_dir / "_site_summary.json"
             with open(summary_path, "w", encoding="utf-8") as f:
-                json.dump(summary, f, indent=2, ensure_ascii=False)
+                json.dump(summary, f, indent=2, ensure_ascii=False, default=str)
             spider.logger.info(f"Site summary saved to {summary_path}")
-        except (TypeError, ValueError) as e:
-            spider.logger.error(f"Failed to write site summary: {e}")
+        except Exception as e:
+            spider.logger.error(f"Failed to write site summary: {e}", exc_info=True)
 
     def _build_safe_filename(self, url: str) -> str:
         sanitized = self._invalid_filename_chars.sub("_", url)

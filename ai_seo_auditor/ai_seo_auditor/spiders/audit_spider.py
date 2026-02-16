@@ -1,3 +1,6 @@
+import asyncio
+import json
+
 import scrapy
 import yaml
 from lxml import etree
@@ -9,7 +12,7 @@ from scrapy_playwright.page import PageMethod
 from typing import Any, AsyncGenerator
 from urllib.parse import urlparse
 from ai_seo_auditor.services.llm_service import analyze_with_ollama
-from ai_seo_auditor.models.schemas import MetaTags, HeaderStructure, ImageStats
+from ai_seo_auditor.models.schemas import MetaTags, HeaderStructure, ImageStats, PageAudit
 
 
 class AuditSpider(scrapy.Spider):
@@ -44,6 +47,7 @@ class AuditSpider(scrapy.Spider):
             raise ValueError(f"max_depth must be >= 0 and max_pages >= 1, got {self.max_depth}, {self.max_pages}")
 
         self.pages_analyzed: int = 0
+        self._pages_lock = asyncio.Lock()
 
         # Initialize start_urls
         self.start_urls = audit_config.get('start_urls', ["https://books.toscrape.com/"])
@@ -71,9 +75,12 @@ class AuditSpider(scrapy.Spider):
             )
 
     async def parse(self, response: TextResponse) -> AsyncGenerator[dict, None]:
-        if self.pages_analyzed >= self.max_pages:
-            self.logger.info(f"Max pages limit ({self.max_pages}) reached. Stopping audit for {response.url} and future pages.")
-            return
+        async with self._pages_lock:
+            if self.pages_analyzed >= self.max_pages:
+                self.logger.info(f"Max pages limit ({self.max_pages}) reached. Stopping audit for {response.url} and future pages.")
+                return
+            self.pages_analyzed += 1
+            current_page = self.pages_analyzed
 
         # Skip non-HTML responses (images, PDFs, etc.)
         content_type = response.headers.get("Content-Type", b"").decode("utf-8", errors="ignore")
@@ -81,8 +88,7 @@ class AuditSpider(scrapy.Spider):
             self.logger.info(f"Skipping non-HTML response ({content_type}): {response.url}")
             return
 
-        self.pages_analyzed += 1
-        self.logger.info(f"Auditing {response.url} (Page {self.pages_analyzed}/{self.max_pages})")
+        self.logger.info(f"Auditing {response.url} (Page {current_page}/{self.max_pages})")
 
         # 1. Prepare Data
         # Parse a fresh lxml tree from the response body (avoids expensive deepcopy)
@@ -112,7 +118,11 @@ class AuditSpider(scrapy.Spider):
             description=response.xpath('//meta[@name="description"]/@content').get(),
             canonical=response.xpath('//link[@rel="canonical"]/@href').get(),
             og_title=response.xpath('//meta[@property="og:title"]/@content').get(),
-            og_description=response.xpath('//meta[@property="og:description"]/@content').get()
+            og_description=response.xpath('//meta[@property="og:description"]/@content').get(),
+            robots=response.xpath('//meta[@name="robots"]/@content').get(),
+            viewport=response.xpath('//meta[@name="viewport"]/@content').get(),
+            og_image=response.xpath('//meta[@property="og:image"]/@content').get(),
+            twitter_card=response.xpath('//meta[@name="twitter:card"]/@content').get(),
         )
 
         # Extract Header Structure (use //text() to capture nested text like <h1><a>Title</a></h1>)
@@ -129,14 +139,23 @@ class AuditSpider(scrapy.Spider):
             h4_h6_count=len(response.xpath('//h4 | //h5 | //h6'))
         )
 
-        # Extract Image Stats
+        # Extract Image Stats — distinguish truly missing alt from empty alt=""
         images = response.xpath('//img')
         total_images = len(images)
-        missing_alt = len(response.xpath('//img[not(@alt) or @alt=""]'))
-        image_stats = ImageStats(total_images=total_images, missing_alt=missing_alt)
+        missing_alt = len(response.xpath('//img[not(@alt)]'))
+        empty_alt = len(response.xpath('//img[@alt=""]'))
+        image_stats = ImageStats(
+            total_images=total_images, missing_alt=missing_alt, empty_alt=empty_alt
+        )
 
-        # Extract JSON-LD
-        json_ld = response.xpath('//script[@type="application/ld+json"]/text()').getall()
+        # Extract JSON-LD — parse raw strings into dicts so the LLM sees real JSON
+        raw_json_ld = response.xpath('//script[@type="application/ld+json"]/text()').getall()
+        json_ld: list[dict] = []
+        for raw in raw_json_ld:
+            try:
+                json_ld.append(json.loads(raw))
+            except (json.JSONDecodeError, TypeError):
+                self.logger.warning(f"Invalid JSON-LD on {response.url}: {raw[:120]}")
 
         # Extract text content
         text_content = " ".join(text.strip() for text in body.itertext() if text and text.strip())
@@ -146,6 +165,7 @@ class AuditSpider(scrapy.Spider):
         audit_config = self.config.get("audit", {})
         timeout_seconds = float(audit_config.get("llm_timeout_seconds", 60))
         retry_attempts = int(audit_config.get("llm_retry_attempts", 2))
+        retry_base_delay = float(audit_config.get("llm_retry_base_delay", 1.0))
         try:
             audit_result = await analyze_with_ollama(
                 url=response.url,
@@ -157,6 +177,7 @@ class AuditSpider(scrapy.Spider):
                 image_stats=image_stats,
                 timeout_seconds=timeout_seconds,
                 retry_attempts=retry_attempts,
+                retry_base_delay=retry_base_delay,
                 logger=self.logger,
             )
 
@@ -166,8 +187,8 @@ class AuditSpider(scrapy.Spider):
 
         except Exception as e:
             self.logger.error(f"Error auditing {response.url}: {e}")
-            # Yield a minimal error report so the failure is recorded
-            yield {
+            # Yield a validated error report so schema compliance is guaranteed
+            error_report = PageAudit.model_validate({
                 "url": response.url,
                 "meta_tags": meta_tags.model_dump(),
                 "headers": headers.model_dump(),
@@ -178,7 +199,8 @@ class AuditSpider(scrapy.Spider):
                 },
                 "schema_analysis": {"score": 0, "detected_types": [], "missing_fields": []},
                 "content_analysis": {"score": 0, "has_direct_answer": False, "answer_snippet": None},
-            }
+            })
+            yield error_report.model_dump()
 
         # 4. Crawl: Extract and follow links if depth allows
         current_depth = response.meta.get('depth', 0)
@@ -187,6 +209,8 @@ class AuditSpider(scrapy.Spider):
             links = le.extract_links(response)
 
             for link in links:
+                if self.pages_analyzed >= self.max_pages:
+                    break
                 yield scrapy.Request(
                     link.url,
                     callback=self.parse,

@@ -11,255 +11,73 @@ from typing import Any, Optional
 # ---------------------------------------------------------------------------
 st.set_page_config(
     page_title="AI SEO Auditor",
-    page_icon="🔍",
+    page_icon="\U0001f50d",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
 # ---------------------------------------------------------------------------
-# Dark theme colour constants (Python-side, for Plotly + inline HTML)
+# Colour constants (Python-side, for Plotly + inline HTML only).
+# All native Streamlit widgets are themed by .streamlit/config.toml.
 # ---------------------------------------------------------------------------
-C_BG          = "#0e1117"
-C_BG2         = "#161b22"
-C_CARD        = "#161b22"
-C_BORDER      = "#21262d"
-C_TEXT         = "#e6edf3"
-C_TEXT2        = "#8b949e"
-C_GRID        = "#21262d"
 C_ACCENT       = "#3b82f6"
 C_ACCENT_FILL  = "rgba(59,130,246,0.15)"
 C_GREEN_FILL   = "rgba(34,197,94,0.15)"
-C_GAUGE_BG     = "#21262d"
 C_GOOD         = "#22c55e"
 C_OK           = "#eab308"
 C_BAD          = "#ef4444"
 
 # ---------------------------------------------------------------------------
-# Dark theme — comprehensive CSS
+# Minimal CSS -- custom HTML components only (grade badge, score cards,
+# severity pills, checklist).  Do NOT override native widgets here;
+# .streamlit/config.toml handles that.
 # ---------------------------------------------------------------------------
 st.markdown("""
 <style>
-/* ---- Global overrides ---- */
-html, body, [data-testid="stAppViewContainer"],
-[data-testid="stAppViewContainer"] > div {{
-    background: linear-gradient(180deg, {bg} 0%, {bg2} 100%) !important;
-    color: {txt} !important;
-}}
-[data-testid="stSidebar"] {{
-    background: #0d1117 !important;
-    border-right: 1px solid {brd} !important;
-}}
-[data-testid="stSidebar"] > div:first-child {{
-    background: #0d1117 !important;
-}}
-
-/* All text */
-h1, h2, h3, h4 {{ color: {txt} !important; }}
-p, li, span, label, div {{ color: {txt}; }}
-
-/* Widget labels */
-[data-testid="stWidgetLabel"] label,
-[data-testid="stWidgetLabel"] p,
-.stSelectbox label, .stSlider label, .stMultiSelect label,
-.stTextInput label, .stRadio label {{
-    color: {txt} !important;
-}}
-
-/* Sidebar text */
-[data-testid="stSidebar"] h1,
-[data-testid="stSidebar"] h2,
-[data-testid="stSidebar"] h3,
-[data-testid="stSidebar"] p,
-[data-testid="stSidebar"] span,
-[data-testid="stSidebar"] label,
-[data-testid="stSidebar"] div {{
-    color: {txt} !important;
-}}
-
-/* Metrics */
-[data-testid="stMetricValue"] {{ color: {txt} !important; }}
-[data-testid="stMetricLabel"] {{ color: {txt2} !important; }}
-
-/* Tabs */
-button[data-baseweb="tab"] {{ color: {txt2} !important; }}
-button[data-baseweb="tab"][aria-selected="true"] {{ color: {txt} !important; }}
-
-/* Expander */
-[data-testid="stExpander"] details summary span {{ color: {txt} !important; }}
-[data-testid="stExpander"] details {{ border-color: {brd} !important; }}
-
-/* Dataframe */
-[data-testid="stDataFrame"] {{
-    border: 1px solid {brd};
-    border-radius: 8px;
-}}
-
-/* Buttons */
-[data-testid="stDownloadButton"] button {{
-    border: 1px solid {brd} !important;
-    color: {txt} !important;
-    background-color: {card} !important;
-}}
-
-/* Progress bar track */
-[role="progressbar"] {{ background-color: {brd} !important; }}
-
-/* ---- Selectbox / dropdown trigger ---- */
-[data-testid="stSelectbox"] > div > div,
-[data-testid="stMultiSelect"] > div > div {{
-    background-color: {card} !important;
-    border-color: {brd} !important;
-    color: {txt} !important;
-}}
-[data-testid="stSelectbox"] [data-baseweb="select"] span,
-[data-testid="stSelectbox"] [data-baseweb="select"] div[class*="ValueContainer"] *,
-[data-testid="stMultiSelect"] [data-baseweb="select"] span,
-[data-testid="stMultiSelect"] [data-baseweb="select"] div[class*="ValueContainer"] * {{
-    color: {txt} !important;
-}}
-[data-testid="stSelectbox"] svg,
-[data-testid="stMultiSelect"] svg {{
-    fill: {txt2} !important;
-}}
-
-/* ---- Dropdown menus (popover lists) ---- */
-[data-baseweb="popover"],
-[data-baseweb="popover"] > div,
-[data-baseweb="menu"],
-[data-baseweb="menu"] ul {{
-    background-color: #1c2128 !important;
-    border: 1px solid {brd} !important;
-}}
-[data-baseweb="menu"] li,
-[data-baseweb="menu"] ul li {{
-    color: {txt} !important;
-    background-color: #1c2128 !important;
-}}
-[data-baseweb="menu"] li:hover,
-[data-baseweb="menu"] ul li:hover {{
-    background-color: #30363d !important;
-}}
-[data-baseweb="menu"] li[aria-selected="true"],
-[data-baseweb="menu"] ul li[aria-selected="true"] {{
-    background-color: #30363d !important;
-}}
-
-/* ---- Text inputs ---- */
-[data-testid="stTextInput"] input,
-[data-testid="stNumberInput"] input,
-[data-testid="stTextArea"] textarea {{
-    background-color: {card} !important;
-    border-color: {brd} !important;
-    color: {txt} !important;
-}}
-[data-testid="stTextInput"] input::placeholder,
-[data-testid="stTextArea"] textarea::placeholder {{
-    color: {txt2} !important;
-}}
-
-/* ---- Slider ---- */
-[data-testid="stSlider"] div[data-baseweb="slider"] div {{ color: {txt} !important; }}
-[data-testid="stSlider"] [data-testid="stTickBarMin"],
-[data-testid="stSlider"] [data-testid="stTickBarMax"] {{ color: {txt2} !important; }}
-
-/* ---- Radio ---- */
-[data-testid="stRadio"] label span {{ color: {txt} !important; }}
-
-/* ---- Multiselect chips ---- */
-[data-testid="stMultiSelect"] [data-baseweb="tag"] {{
-    background-color: #30363d !important;
-    color: {txt} !important;
-    border-color: {brd} !important;
-}}
-
-/* ---- Base-web input wrappers ---- */
-[data-baseweb="input"],
-[data-baseweb="base-input"],
-[data-baseweb="select"] > div {{
-    background-color: {card} !important;
-    border-color: {brd} !important;
-}}
-[data-baseweb="input"] input {{
-    color: {txt} !important;
-    -webkit-text-fill-color: {txt} !important;
-}}
-
-/* ---- Header bar ---- */
-[data-testid="stHeader"] {{
-    background: rgba(14,17,23,0.8) !important;
-    backdrop-filter: blur(8px);
-}}
-[data-testid="stToolbar"] {{ color: {txt2} !important; }}
-
-/* ---- Alerts ---- */
-[data-testid="stAlert"] {{ border-color: {brd} !important; }}
-
-/* ---- Code blocks ---- */
-[data-testid="stCode"], code {{
-    background-color: {bg2} !important;
-    color: {txt} !important;
-}}
-
-/* ---- Markdown ---- */
-[data-testid="stMarkdownContainer"],
-[data-testid="stMarkdownContainer"] p,
-[data-testid="stMarkdownContainer"] li,
-[data-testid="stMarkdownContainer"] span {{ color: {txt} !important; }}
-[data-testid="stCaptionContainer"] {{ color: {txt2} !important; }}
-
-/* ---- Misc ---- */
-hr {{ border-color: {brd} !important; }}
-footer, footer a {{ color: {txt2} !important; }}
-
-/* ---- Grade badge ---- */
-.grade-badge {{
+.grade-badge {
     display: inline-flex; align-items: center; justify-content: center;
     width: 120px; height: 120px; border-radius: 50%;
     font-size: 3.2rem; font-weight: 800; color: #fff;
     box-shadow: 0 0 30px rgba(0,0,0,0.4);
     margin: 0 auto;
-}}
-.grade-A {{ background: linear-gradient(135deg, #22c55e, #16a34a); }}
-.grade-B {{ background: linear-gradient(135deg, #3b82f6, #2563eb); }}
-.grade-C {{ background: linear-gradient(135deg, #eab308, #ca8a04); }}
-.grade-D {{ background: linear-gradient(135deg, #f97316, #ea580c); }}
-.grade-F {{ background: linear-gradient(135deg, #ef4444, #dc2626); }}
+}
+.grade-A { background: linear-gradient(135deg, #22c55e, #16a34a); }
+.grade-B { background: linear-gradient(135deg, #3b82f6, #2563eb); }
+.grade-C { background: linear-gradient(135deg, #eab308, #ca8a04); }
+.grade-D { background: linear-gradient(135deg, #f97316, #ea580c); }
+.grade-F { background: linear-gradient(135deg, #ef4444, #dc2626); }
 
-/* ---- Score cards ---- */
-.score-card {{
-    background: {card}; border: 1px solid {brd}; border-radius: 12px;
+.score-card {
+    background: var(--secondary-background-color);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 12px;
     padding: 16px 12px; text-align: center; margin-bottom: 8px;
-}}
-.score-card .label {{ font-size: 0.75rem; color: {txt2}; text-transform: uppercase; letter-spacing: 0.05em; }}
-.score-card .value {{ font-size: 1.6rem; font-weight: 700; margin-top: 4px; }}
-.score-good {{ color: #22c55e; }}
-.score-ok   {{ color: #eab308; }}
-.score-bad  {{ color: #ef4444; }}
+}
+.score-card .label {
+    font-size: 0.75rem; opacity: 0.55;
+    text-transform: uppercase; letter-spacing: 0.05em;
+}
+.score-card .value { font-size: 1.6rem; font-weight: 700; margin-top: 4px; }
+.score-good { color: #22c55e; }
+.score-ok   { color: #eab308; }
+.score-bad  { color: #ef4444; }
 
-/* ---- Severity pills ---- */
-.sev-high   {{ background: #dc2626; color: #fff; padding: 2px 10px; border-radius: 10px; font-size: 0.75rem; font-weight: 600; }}
-.sev-medium {{ background: #ca8a04; color: #fff; padding: 2px 10px; border-radius: 10px; font-size: 0.75rem; font-weight: 600; }}
-.sev-low    {{ background: #2563eb; color: #fff; padding: 2px 10px; border-radius: 10px; font-size: 0.75rem; font-weight: 600; }}
+.sev-high   { background: #dc2626; color: #fff; padding: 2px 10px; border-radius: 10px; font-size: 0.75rem; font-weight: 600; }
+.sev-medium { background: #ca8a04; color: #fff; padding: 2px 10px; border-radius: 10px; font-size: 0.75rem; font-weight: 600; }
+.sev-low    { background: #2563eb; color: #fff; padding: 2px 10px; border-radius: 10px; font-size: 0.75rem; font-weight: 600; }
 
-/* ---- Checklist ---- */
-.check-pass {{ color: #22c55e; font-weight: 600; }}
-.check-fail {{ color: #ef4444; font-weight: 600; }}
-
-/* ---- Plotly ---- */
-.js-plotly-plot .plotly .main-svg {{ background: transparent !important; }}
+.check-pass { color: #22c55e; font-weight: 600; }
+.check-fail { color: #ef4444; font-weight: 600; }
 </style>
-""".format(
-    bg=C_BG, bg2=C_BG2, card=C_CARD, brd=C_BORDER,
-    txt=C_TEXT, txt2=C_TEXT2,
-), unsafe_allow_html=True)
+""", unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------------
 # Title
 # ---------------------------------------------------------------------------
-st.markdown("# 🔍 AI SEO Auditor")
+st.markdown("# \U0001f50d AI SEO Auditor")
 
 # ---------------------------------------------------------------------------
-# Sidebar — report selection & filters
+# Sidebar -- report selection & filters
 # ---------------------------------------------------------------------------
 st.sidebar.header("Report")
 
@@ -303,15 +121,20 @@ DIM_LABELS = {
     "accessibility_score": "Accessibility",
 }
 
+
 def _score_color_class(v: float) -> str:
-    if v >= 70: return "score-good"
-    if v >= 40: return "score-ok"
+    if v >= 70:
+        return "score-good"
+    if v >= 40:
+        return "score-ok"
     return "score-bad"
 
 
 def _score_color(v: float) -> str:
-    if v >= 70: return C_GOOD
-    if v >= 40: return C_OK
+    if v >= 70:
+        return C_GOOD
+    if v >= 40:
+        return C_OK
     return C_BAD
 
 
@@ -320,13 +143,11 @@ def _sev_pill(sev: str) -> str:
 
 
 def _plotly_layout(**overrides) -> dict:
-    """Common Plotly layout kwargs for dark theme."""
+    """Common Plotly layout kwargs -- transparent bg + plotly_dark template."""
     base = dict(
+        template="plotly_dark",
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        font_color=C_TEXT,
-        xaxis=dict(gridcolor=C_GRID),
-        yaxis=dict(gridcolor=C_GRID),
     )
     base.update(overrides)
     return base
@@ -347,7 +168,7 @@ def load_data(folder_path: str) -> pd.DataFrame:
 
             missing = _REQUIRED_KEYS - report.keys()
             if missing:
-                st.warning(f"⚠️ {file_path.name} is missing keys: {missing}")
+                st.warning(f"\u26a0\ufe0f {file_path.name} is missing keys: {missing}")
 
             row: dict[str, Any] = {
                 "url": report.get("url", file_path.stem),
@@ -396,12 +217,12 @@ if df.empty:
     st.stop()
 
 # ---------------------------------------------------------------------------
-# Sidebar — filters
+# Sidebar -- filters
 # ---------------------------------------------------------------------------
 st.sidebar.markdown("---")
 st.sidebar.header("Filters")
 
-url_search = st.sidebar.text_input("🔎 Search URL", "")
+url_search = st.sidebar.text_input("\U0001f50e Search URL", "")
 score_range = st.sidebar.slider("Overall Score Range", 0, 100, (0, 100))
 severity_filter = st.sidebar.multiselect(
     "Issue Severity",
@@ -419,7 +240,7 @@ filtered_df = filtered_df[
 ]
 
 # ---------------------------------------------------------------------------
-# Sidebar — CSV export
+# Sidebar -- CSV export
 # ---------------------------------------------------------------------------
 st.sidebar.markdown("---")
 st.sidebar.header("Export")
@@ -427,7 +248,7 @@ st.sidebar.header("Export")
 export_cols = ["url", "overall_score", "letter_grade"] + ALL_DIMENSIONS + ["canonical_score", "issues_count"]
 csv_data = filtered_df[[c for c in export_cols if c in filtered_df.columns]].to_csv(index=False)
 st.sidebar.download_button(
-    label="📥 Download CSV",
+    label="\U0001f4e5 Download CSV",
     data=csv_data,
     file_name=f"seo_audit_{selected_folder_name}.csv",
     mime="text/csv",
@@ -437,15 +258,15 @@ st.sidebar.download_button(
 all_reports = [row["raw_data"] for _, row in filtered_df.iterrows()]
 json_export = json.dumps(all_reports, indent=2, default=str)
 st.sidebar.download_button(
-    label="📥 Download Full JSON",
+    label="\U0001f4e5 Download Full JSON",
     data=json_export,
     file_name=f"seo_audit_{selected_folder_name}.json",
     mime="application/json",
 )
 
-# ═══════════════════════════════════════════════════════════════════════════
-# SECTION 1 — HERO: Overall Site Grade
-# ═══════════════════════════════════════════════════════════════════════════
+# =========================================================================
+# SECTION 1 -- HERO: Overall Site Grade
+# =========================================================================
 
 if site_summary:
     overall_grade = site_summary.get("overall_grade", "F")
@@ -470,14 +291,14 @@ with hero_left:
     st.markdown(
         f'<div style="text-align:center; padding-top:10px;">'
         f'<div class="grade-badge grade-{overall_grade}">{overall_grade}</div>'
-        f'<p style="color:{C_TEXT2}; margin-top:8px;">Overall Score: <b style="color:{C_TEXT};">{overall_score_val}</b>/100</p>'
-        f'<p style="color:{C_TEXT2};">{len(filtered_df)} pages audited</p>'
+        f'<p style="opacity:0.55; margin-top:8px;">Overall Score: <b>{overall_score_val}</b>/100</p>'
+        f'<p style="opacity:0.55;">{len(filtered_df)} pages audited</p>'
         f'</div>',
         unsafe_allow_html=True,
     )
 
 with hero_right:
-    # Radar chart — site-wide dimension averages
+    # Radar chart -- site-wide dimension averages
     dim_names_ordered = ["Semantic", "Schema", "Content", "Links", "Performance", "Readability", "Security", "Accessibility"]
     dim_map = {
         "Semantic": "semantic_analysis", "Schema": "schema_analysis",
@@ -486,7 +307,7 @@ with hero_right:
         "Security": "security", "Accessibility": "accessibility",
     }
     radar_values = [dim_avgs.get(n, dim_avgs.get(dim_map.get(n, ""), 0)) for n in dim_names_ordered]
-    radar_values_closed = radar_values + [radar_values[0]]  # close the polygon
+    radar_values_closed = radar_values + [radar_values[0]]
     theta = dim_names_ordered + [dim_names_ordered[0]]
 
     fig_radar = go.Figure(data=go.Scatterpolar(
@@ -498,15 +319,14 @@ with hero_right:
         marker=dict(size=6, color=C_ACCENT),
     ))
     fig_radar.update_layout(
+        **_plotly_layout(),
         polar=dict(
             bgcolor="rgba(0,0,0,0)",
-            radialaxis=dict(visible=True, range=[0, 100], tickfont=dict(color=C_TEXT2, size=10), gridcolor=C_GRID),
-            angularaxis=dict(tickfont=dict(color=C_TEXT, size=12), gridcolor=C_GRID),
+            radialaxis=dict(visible=True, range=[0, 100]),
+            angularaxis=dict(),
         ),
         showlegend=False,
         margin=dict(l=60, r=60, t=30, b=30),
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
         height=320,
     )
     st.plotly_chart(fig_radar, use_container_width=True)
@@ -524,14 +344,13 @@ for i, name in enumerate(dim_names_ordered):
 
 st.markdown("---")
 
-# ═══════════════════════════════════════════════════════════════════════════
-# SECTION 2 — Score Distributions
-# ═══════════════════════════════════════════════════════════════════════════
-st.header("📊 Score Distributions")
+# =========================================================================
+# SECTION 2 -- Score Distributions
+# =========================================================================
+st.header("\U0001f4ca Score Distributions")
 col_box, col_scatter = st.columns(2)
 
 with col_box:
-    # Box plot across all dimensions
     melt_df = filtered_df[ALL_DIMENSIONS].melt(var_name="Dimension", value_name="Score")
     melt_df["Dimension"] = melt_df["Dimension"].map(DIM_LABELS)
     fig_box = px.box(
@@ -542,7 +361,7 @@ with col_box:
     )
     fig_box.update_layout(**_plotly_layout(
         showlegend=False,
-        yaxis=dict(gridcolor=C_GRID, range=[0, 105]),
+        yaxis=dict(range=[0, 105]),
     ))
     st.plotly_chart(fig_box, use_container_width=True)
 
@@ -566,10 +385,10 @@ with col_scatter:
 
 st.markdown("---")
 
-# ═══════════════════════════════════════════════════════════════════════════
-# SECTION 3 — Issue Aggregation (site-wide)
-# ═══════════════════════════════════════════════════════════════════════════
-st.header("⚠️ Top Issues Across All Pages")
+# =========================================================================
+# SECTION 3 -- Issue Aggregation (site-wide)
+# =========================================================================
+st.header("\u26a0\ufe0f Top Issues Across All Pages")
 
 if site_summary and site_summary.get("top_issues"):
     top_issues = site_summary["top_issues"]
@@ -583,10 +402,10 @@ if site_summary and site_summary.get("top_issues"):
         })
     if issue_rows:
         issue_df = pd.DataFrame(issue_rows)
-        # Color-code severity
+
         def style_severity(val: str) -> str:
             colors = {"HIGH": "#dc2626", "MEDIUM": "#ca8a04", "LOW": "#2563eb"}
-            bg = colors.get(val, C_BORDER)
+            bg = colors.get(val, "#333")
             return f"background-color: {bg}; color: white; border-radius: 6px; padding: 2px 8px;"
 
         st.dataframe(
@@ -634,10 +453,10 @@ else:
 
 st.markdown("---")
 
-# ═══════════════════════════════════════════════════════════════════════════
-# SECTION 4 — Detailed Page Table
-# ═══════════════════════════════════════════════════════════════════════════
-st.header("📄 Page Results")
+# =========================================================================
+# SECTION 4 -- Detailed Page Table
+# =========================================================================
+st.header("\U0001f4c4 Page Results")
 
 display_cols = [
     "url", "letter_grade", "overall_score",
@@ -650,8 +469,8 @@ display_cols = [
 available_display = [c for c in display_cols if c in filtered_df.columns]
 styled_df = filtered_df[available_display].copy()
 
-# Conditional formatting
 score_cols = [c for c in available_display if c.endswith("_score")]
+
 
 def color_scores(val: Any) -> str:
     try:
@@ -659,10 +478,11 @@ def color_scores(val: Any) -> str:
     except (ValueError, TypeError):
         return ""
     if v >= 70:
-        return "background-color: rgba(34,197,94,0.2); color: #22c55e;"
+        return f"background-color: rgba(34,197,94,0.2); color: {C_GOOD};"
     if v >= 40:
-        return "background-color: rgba(234,179,8,0.2); color: #eab308;"
-    return "background-color: rgba(239,68,68,0.2); color: #ef4444;"
+        return f"background-color: rgba(234,179,8,0.2); color: {C_OK};"
+    return f"background-color: rgba(239,68,68,0.2); color: {C_BAD};"
+
 
 st.dataframe(
     styled_df.style.map(color_scores, subset=score_cols),
@@ -673,10 +493,10 @@ st.dataframe(
 
 st.markdown("---")
 
-# ═══════════════════════════════════════════════════════════════════════════
-# SECTION 5 — Page Drill-down
-# ═══════════════════════════════════════════════════════════════════════════
-st.header("🔍 Page Drill-down")
+# =========================================================================
+# SECTION 5 -- Page Drill-down
+# =========================================================================
+st.header("\U0001f50d Page Drill-down")
 selected_url = st.selectbox("Select a page:", filtered_df["url"].unique())
 
 if selected_url:
@@ -702,12 +522,11 @@ if selected_url:
             st.markdown(
                 f'<div style="text-align:center; padding:20px 0;">'
                 f'<div class="grade-badge grade-{page_grade}">{page_grade}</div>'
-                f'<p style="color:{C_TEXT2}; margin-top:8px;">Score: <b style="color:{C_TEXT};">{page_overall}</b>/100</p>'
+                f'<p style="opacity:0.55; margin-top:8px;">Score: <b>{page_overall}</b>/100</p>'
                 f'</div>',
                 unsafe_allow_html=True,
             )
         with ov_right:
-            # Per-page radar
             page_scores = {
                 "Semantic": page_data.get("semantic_analysis", {}).get("score", 0),
                 "Schema": page_data.get("schema_analysis", {}).get("score", 0),
@@ -726,14 +545,14 @@ if selected_url:
                 line=dict(color=C_GOOD, width=2),
             ))
             fig_pr.update_layout(
+                **_plotly_layout(),
                 polar=dict(
                     bgcolor="rgba(0,0,0,0)",
-                    radialaxis=dict(visible=True, range=[0, 100], gridcolor=C_GRID, tickfont=dict(color=C_TEXT2)),
-                    angularaxis=dict(tickfont=dict(color=C_TEXT), gridcolor=C_GRID),
+                    radialaxis=dict(visible=True, range=[0, 100]),
+                    angularaxis=dict(),
                 ),
                 showlegend=False,
                 margin=dict(l=60, r=60, t=20, b=20),
-                paper_bgcolor="rgba(0,0,0,0)",
                 height=300,
             )
             st.plotly_chart(fig_pr, use_container_width=True)
@@ -777,10 +596,9 @@ if selected_url:
     with tabs[1]:
         sem = page_data.get("semantic_analysis", {})
         sem_score = sem.get("score", 0)
-        st.subheader(f"Semantic Analysis — {sem_score}/100")
+        st.subheader(f"Semantic Analysis -- {sem_score}/100")
         st.progress(max(0.0, min(1.0, sem_score / 100)))
 
-        # Header structure
         hdrs = page_data.get("headers", {})
         with st.expander("Header Structure", expanded=True):
             hc1, hc2, hc3, hc4 = st.columns(4)
@@ -810,7 +628,7 @@ if selected_url:
     with tabs[2]:
         sch = page_data.get("schema_analysis", {})
         sch_score = sch.get("score", 0)
-        st.subheader(f"Schema Analysis — {sch_score}/100")
+        st.subheader(f"Schema Analysis -- {sch_score}/100")
         st.progress(max(0.0, min(1.0, sch_score / 100)))
 
         col_s1, col_s2 = st.columns(2)
@@ -835,11 +653,11 @@ if selected_url:
     with tabs[3]:
         cnt = page_data.get("content_analysis", {})
         cnt_score = cnt.get("score", 0)
-        st.subheader(f"Content Analysis — {cnt_score}/100")
+        st.subheader(f"Content Analysis -- {cnt_score}/100")
         st.progress(max(0.0, min(1.0, cnt_score / 100)))
 
         if cnt.get("has_direct_answer"):
-            st.success("✅ This page provides a direct answer!")
+            st.success("\u2705 This page provides a direct answer!")
             snippet = cnt.get("answer_snippet")
             if snippet:
                 st.info(f"**Snippet:** {snippet}")
@@ -849,14 +667,14 @@ if selected_url:
         st.markdown("---")
         rda = page_data.get("readability", {})
         rda_score = rda.get("score", 0)
-        st.subheader(f"Readability — {rda_score}/100")
+        st.subheader(f"Readability -- {rda_score}/100")
         st.progress(max(0.0, min(1.0, rda_score / 100)))
 
         rc1, rc2, rc3 = st.columns(3)
         rc1.metric("Word Count", rda.get("word_count", 0))
         rc2.metric("Reading Level", rda.get("reading_level") or "N/A")
         thin = rda.get("thin_content", False)
-        rc3.metric("Thin Content", "⚠️ Yes" if thin else "✅ No")
+        rc3.metric("Thin Content", "\u26a0\ufe0f Yes" if thin else "\u2705 No")
 
         kdn = rda.get("keyword_density_notes")
         if kdn:
@@ -873,7 +691,7 @@ if selected_url:
     with tabs[4]:
         la = page_data.get("link_analysis", {})
         la_score = la.get("score", 0)
-        st.subheader(f"Link Analysis — {la_score}/100")
+        st.subheader(f"Link Analysis -- {la_score}/100")
         st.progress(max(0.0, min(1.0, la_score / 100)))
 
         lc1, lc2, lc3 = st.columns(3)
@@ -881,7 +699,6 @@ if selected_url:
         lc2.metric("External Links", la.get("external_links", 0))
         lc3.metric("Nofollow", la.get("nofollow_count", 0))
 
-        # Bar chart
         link_data = pd.DataFrame([
             {"Type": "Internal", "Count": la.get("internal_links", 0)},
             {"Type": "External", "Count": la.get("external_links", 0)},
@@ -889,7 +706,7 @@ if selected_url:
         ])
         fig_links = px.bar(
             link_data, x="Type", y="Count", color="Type",
-            color_discrete_map={"Internal": "#3b82f6", "External": "#22c55e", "Nofollow": "#eab308"},
+            color_discrete_map={"Internal": C_ACCENT, "External": C_GOOD, "Nofollow": C_OK},
         )
         fig_links.update_layout(**_plotly_layout(showlegend=False, height=250))
         st.plotly_chart(fig_links, use_container_width=True)
@@ -913,7 +730,7 @@ if selected_url:
     with tabs[5]:
         perf = page_data.get("performance", {})
         perf_score = perf.get("score", 0)
-        st.subheader(f"Performance — {perf_score}/100")
+        st.subheader(f"Performance -- {perf_score}/100")
         st.progress(max(0.0, min(1.0, perf_score / 100)))
 
         pc1, pc2, pc3 = st.columns(3)
@@ -925,15 +742,14 @@ if selected_url:
         pc2.metric("Page Size", f"{ps_bytes / 1024:.1f} KB")
         pc3.metric("Resources", res_count)
 
-        # Gauge chart for response time
         fig_gauge = go.Figure(go.Indicator(
             mode="gauge+number",
             value=rt_ms,
-            number=dict(suffix=" ms", font=dict(color=C_TEXT)),
+            number=dict(suffix=" ms"),
             gauge=dict(
-                axis=dict(range=[0, 5000], tickfont=dict(color=C_TEXT2)),
+                axis=dict(range=[0, 5000]),
                 bar=dict(color=_score_color(perf_score)),
-                bgcolor=C_GAUGE_BG,
+                bgcolor="#21262d",
                 steps=[
                     dict(range=[0, 500], color="rgba(34,197,94,0.15)"),
                     dict(range=[500, 1000], color="rgba(59,130,246,0.15)"),
@@ -941,10 +757,11 @@ if selected_url:
                     dict(range=[2000, 5000], color="rgba(239,68,68,0.15)"),
                 ],
             ),
-            title=dict(text="Response Time", font=dict(color=C_TEXT)),
+            title=dict(text="Response Time"),
         ))
         fig_gauge.update_layout(
-            paper_bgcolor="rgba(0,0,0,0)", height=250,
+            **_plotly_layout(),
+            height=250,
             margin=dict(l=30, r=30, t=50, b=20),
         )
         st.plotly_chart(fig_gauge, use_container_width=True)
@@ -953,7 +770,7 @@ if selected_url:
     with tabs[6]:
         sec = page_data.get("security", {})
         sec_score = sec.get("score", 0)
-        st.subheader(f"Security — {sec_score}/100")
+        st.subheader(f"Security -- {sec_score}/100")
         st.progress(max(0.0, min(1.0, sec_score / 100)))
 
         checks = [
@@ -964,16 +781,16 @@ if selected_url:
             ("No Mixed Content", not sec.get("mixed_content_urls", []), "10 pts"),
         ]
         for label, passed, weight in checks:
-            icon = "✅" if passed else "❌"
+            icon = "\u2705" if passed else "\u274c"
             cls = "check-pass" if passed else "check-fail"
             st.markdown(
-                f'<span class="{cls}">{icon} {label}</span> <span style="color:{C_TEXT2};">({weight})</span>',
+                f'<span class="{cls}">{icon} {label}</span> <span style="opacity:0.55;">({weight})</span>',
                 unsafe_allow_html=True,
             )
 
         mixed_urls = sec.get("mixed_content_urls", [])
         if mixed_urls:
-            with st.expander(f"⚠️ {len(mixed_urls)} Mixed Content URLs"):
+            with st.expander(f"\u26a0\ufe0f {len(mixed_urls)} Mixed Content URLs"):
                 for mu in mixed_urls:
                     st.code(mu, language="text")
 
@@ -981,11 +798,11 @@ if selected_url:
     with tabs[7]:
         a11y = page_data.get("accessibility", {})
         a11y_score = a11y.get("score", 0)
-        st.subheader(f"Accessibility — {a11y_score}/100")
+        st.subheader(f"Accessibility -- {a11y_score}/100")
         st.progress(max(0.0, min(1.0, a11y_score / 100)))
 
         ac1, ac2, ac3 = st.columns(3)
-        ac1.metric("Skip Nav", "✅ Yes" if a11y.get("has_skip_nav") else "❌ No")
+        ac1.metric("Skip Nav", "\u2705 Yes" if a11y.get("has_skip_nav") else "\u274c No")
         ac2.metric("ARIA Landmarks", a11y.get("aria_landmark_count", 0))
         ac3.metric("Missing Form Labels", a11y.get("form_labels_missing", 0))
 
@@ -1001,7 +818,7 @@ if selected_url:
         st.markdown("---")
         can = page_data.get("canonical_analysis", {})
         can_score = can.get("score", 0)
-        st.subheader(f"Canonical & Redirects — {can_score}/100")
+        st.subheader(f"Canonical & Redirects -- {can_score}/100")
         st.progress(max(0.0, min(1.0, can_score / 100)))
 
         can_url = can.get("canonical_url")
@@ -1011,8 +828,8 @@ if selected_url:
 
         cc1, cc2 = st.columns(2)
         cc1.markdown(f"**Canonical URL:** {can_url or '_not set_'}")
-        cc1.markdown(f"**Matches Actual:** {'✅ Yes' if matches else '❌ No'}")
-        cc2.markdown(f"**Hreflang:** {'✅ Present' if has_hl else '❌ Not found'}")
+        cc1.markdown(f"**Matches Actual:** {'\u2705 Yes' if matches else '\u274c No'}")
+        cc2.markdown(f"**Hreflang:** {'\u2705 Present' if has_hl else '\u274c Not found'}")
         cc2.markdown(f"**Redirect Chain:** {len(chain)} hop(s)")
 
         if chain:

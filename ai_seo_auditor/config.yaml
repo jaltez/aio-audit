@@ -31,7 +31,7 @@ audit:
   # Score weights for computing the overall page/site grade (must sum to 1.0)
   # ---------------------------------------------------------------------------
   score_weights:
-    semantic_analysis: 0.20
+    onpage_seo: 0.20
     schema_analysis: 0.10
     content_analysis: 0.15
     link_analysis: 0.15

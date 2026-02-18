@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 import time
 
 import scrapy
@@ -14,10 +15,108 @@ from typing import Any, AsyncGenerator
 from urllib.parse import urlparse
 from ai_seo_auditor.services.llm_service import analyze_with_llm
 from ai_seo_auditor.models.schemas import (
+    Issue,
     MetaTags, HeaderStructure, ImageStats, PageAudit,
+    OnPageSeoChecklist,
     LinkAnalysis, PerformanceMetrics, ReadabilityAnalysis,
     SecurityCheck, AccessibilityAnalysis, CanonicalAnalysis,
 )
+
+
+# ---------------------------------------------------------------------------
+# Flesch-Kincaid helpers
+# ---------------------------------------------------------------------------
+
+_VOWELS = set("aeiouyAEIOUY")
+_SENTENCE_RE = re.compile(r'[.!?]+')
+
+
+def _count_syllables(word: str) -> int:
+    """Estimate syllable count for an English word."""
+    word = word.lower().strip()
+    if not word:
+        return 0
+    if len(word) <= 3:
+        return 1
+    # Remove trailing silent-e
+    if word.endswith("e") and not word.endswith("le"):
+        word = word[:-1]
+    count = 0
+    prev_vowel = False
+    for ch in word:
+        is_vowel = ch in _VOWELS
+        if is_vowel and not prev_vowel:
+            count += 1
+        prev_vowel = is_vowel
+    return max(count, 1)
+
+
+def _compute_flesch_kincaid(text: str) -> dict:
+    """Return FK metrics from plain text."""
+    words = text.split()
+    word_count = len(words)
+    if word_count == 0:
+        return {
+            "word_count": 0, "sentence_count": 0, "syllable_count": 0,
+            "avg_sentence_length": 0.0, "avg_syllables_per_word": 0.0,
+            "flesch_reading_ease": 0.0, "flesch_kincaid_grade": 0.0,
+            "reading_level": "Unknown",
+        }
+    sentences = [s.strip() for s in _SENTENCE_RE.split(text) if s.strip()]
+    sentence_count = max(len(sentences), 1)
+    syllable_count = sum(_count_syllables(w) for w in words)
+
+    avg_sl = word_count / sentence_count
+    avg_spw = syllable_count / word_count
+
+    fre = 206.835 - 1.015 * avg_sl - 84.6 * avg_spw
+    fre = max(0.0, min(fre, 100.0))
+    fkg = 0.39 * avg_sl + 11.8 * avg_spw - 15.59
+    fkg = max(0.0, fkg)
+
+    grade = round(fkg)
+    reading_level = f"Grade {grade}" if grade <= 12 else "College"
+
+    return {
+        "word_count": word_count,
+        "sentence_count": sentence_count,
+        "syllable_count": syllable_count,
+        "avg_sentence_length": round(avg_sl, 1),
+        "avg_syllables_per_word": round(avg_spw, 2),
+        "flesch_reading_ease": round(fre, 1),
+        "flesch_kincaid_grade": round(fkg, 1),
+        "reading_level": reading_level,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Generic link-text patterns
+# ---------------------------------------------------------------------------
+_GENERIC_LINK_TEXTS = {
+    "click here", "read more", "more", "here", "learn more",
+    "continue", "continue reading", "go", "link", "this",
+}
+
+
+# ---------------------------------------------------------------------------
+# Playwright JS to extract Web Vitals timing
+# ---------------------------------------------------------------------------
+_TIMING_JS = """
+() => {
+    const perf = window.performance;
+    const nav = perf.getEntriesByType('navigation')[0] || {};
+    const paint = perf.getEntriesByType('paint') || [];
+    let fcp = null;
+    for (const p of paint) {
+        if (p.name === 'first-contentful-paint') { fcp = Math.round(p.startTime); break; }
+    }
+    return {
+        ttfb: Math.round((nav.responseStart || 0) - (nav.startTime || 0)),
+        fcp: fcp,
+        dcl: Math.round((nav.domContentLoadedEventEnd || 0) - (nav.startTime || 0)),
+    };
+}
+"""
 
 
 class AuditSpider(scrapy.Spider):
@@ -27,8 +126,6 @@ class AuditSpider(scrapy.Spider):
         super().__init__(*args, **kwargs)
 
         # Load config from yaml file located at project root
-        # File structure: project_root/ai_seo_auditor/spiders/audit_spider.py
-        # Config location: project_root/config.yaml
         config_path = Path(__file__).resolve().parents[2] / 'config.yaml'
         self.config: dict = {}
         if config_path.exists():
@@ -76,7 +173,8 @@ class AuditSpider(scrapy.Spider):
                 meta={
                     "playwright": True,
                     "playwright_page_methods": [
-                        PageMethod("wait_for_load_state", "domcontentloaded")
+                        PageMethod("wait_for_load_state", "networkidle"),
+                        PageMethod("evaluate", _TIMING_JS),
                     ],
                 }
             )
@@ -169,7 +267,73 @@ class AuditSpider(scrapy.Spider):
         text_content = text_content[:self.text_max_chars]
 
         # -------------------------------------------------------------------
-        # NEW: Link Analysis
+        # On-Page SEO Checklist (fully deterministic)
+        # -------------------------------------------------------------------
+        title_text = meta_tags.title or ""
+        title_len = len(title_text)
+        desc_text = meta_tags.description or ""
+        desc_len = len(desc_text)
+        h1_count = len(headers.h1)
+        robots_val = (meta_tags.robots or "").lower()
+        robots_allows = "noindex" not in robots_val
+        has_og = bool(meta_tags.og_title and meta_tags.og_description)
+        has_lang = bool(response.xpath('//html/@lang').get())
+
+        # Image alt coverage
+        images_with_alt = total_images - missing_alt
+        alt_pct = (images_with_alt / total_images * 100) if total_images > 0 else 100.0
+
+        onpage_issues: list[dict] = []
+        if not title_text:
+            onpage_issues.append({"severity": "high", "description": "Missing <title> tag", "suggested_fix": "Add a descriptive <title> element in the <head>."})
+        elif title_len < 30:
+            onpage_issues.append({"severity": "medium", "description": f"Title too short ({title_len} chars, recommended 30-60)", "suggested_fix": "Expand the title with relevant keywords."})
+        elif title_len > 60:
+            onpage_issues.append({"severity": "medium", "description": f"Title too long ({title_len} chars, recommended 30-60)", "suggested_fix": "Shorten the title to avoid SERP truncation."})
+        if not desc_text:
+            onpage_issues.append({"severity": "high", "description": "Missing meta description", "suggested_fix": "Add a <meta name=\"description\"> tag with a compelling 70-160 char summary."})
+        elif desc_len < 70:
+            onpage_issues.append({"severity": "low", "description": f"Meta description short ({desc_len} chars, recommended 70-160)", "suggested_fix": "Expand to better summarize page content."})
+        elif desc_len > 160:
+            onpage_issues.append({"severity": "low", "description": f"Meta description long ({desc_len} chars, recommended 70-160)", "suggested_fix": "Shorten to avoid SERP truncation."})
+        if h1_count == 0:
+            onpage_issues.append({"severity": "high", "description": "No H1 heading found", "suggested_fix": "Add a single H1 heading that describes the page topic."})
+        elif h1_count > 1:
+            onpage_issues.append({"severity": "medium", "description": f"Multiple H1 tags ({h1_count})", "suggested_fix": "Use a single H1 per page."})
+        if not meta_tags.viewport:
+            onpage_issues.append({"severity": "high", "description": "Missing viewport meta tag", "suggested_fix": 'Add <meta name="viewport" content="width=device-width, initial-scale=1">.'})
+        if not has_lang:
+            onpage_issues.append({"severity": "medium", "description": "Missing lang attribute on <html>", "suggested_fix": 'Add lang="en" (or appropriate language) to the <html> tag.'})
+        if not has_og:
+            onpage_issues.append({"severity": "low", "description": "Missing Open Graph tags", "suggested_fix": "Add og:title and og:description meta tags for social sharing."})
+        if not robots_allows:
+            onpage_issues.append({"severity": "high", "description": "Page set to noindex", "suggested_fix": "Remove noindex from the robots meta tag if this page should be indexed."})
+        if missing_alt > 0:
+            onpage_issues.append({"severity": "medium", "description": f"{missing_alt} image(s) missing alt attribute", "suggested_fix": "Add descriptive alt text to all images."})
+        if not meta_tags.canonical:
+            onpage_issues.append({"severity": "low", "description": "No canonical URL specified", "suggested_fix": "Add a <link rel=\"canonical\"> to prevent duplicate content issues."})
+
+        onpage_seo = OnPageSeoChecklist(
+            score=0,  # auto-computed by model_validator
+            has_title=bool(title_text),
+            title_length_ok=30 <= title_len <= 60,
+            title_length=title_len,
+            has_meta_description=bool(desc_text),
+            description_length_ok=70 <= desc_len <= 160,
+            description_length=desc_len,
+            single_h1=(h1_count == 1),
+            h1_count=h1_count,
+            has_viewport_meta=bool(meta_tags.viewport),
+            has_lang_attribute=has_lang,
+            has_og_tags=has_og,
+            robots_allows_indexing=robots_allows,
+            image_alt_coverage_pct=round(alt_pct, 1),
+            has_canonical=bool(meta_tags.canonical),
+            issues=[Issue(**i) for i in onpage_issues],
+        )
+
+        # -------------------------------------------------------------------
+        # Link Analysis
         # -------------------------------------------------------------------
         all_links = response.xpath('//a[@href]')
         page_hostname = urlparse(response.url).hostname or ""
@@ -193,14 +357,28 @@ class AuditSpider(scrapy.Spider):
             internal_links=internal_count,
             external_links=external_count,
             nofollow_count=nofollow_count,
-            broken_links=[],  # populated later if broken-link checking enabled
+            broken_links=[],
         )
 
         # -------------------------------------------------------------------
-        # NEW: Performance Metrics
+        # Performance Metrics (Playwright timing)
         # -------------------------------------------------------------------
-        download_latency = response.meta.get("download_latency", 0)
-        response_time_ms = int(download_latency * 1000)
+        timing_data = response.meta.get("playwright_page_methods_result", [None, None])
+        # The second PageMethod is evaluate(_TIMING_JS) -> result at index 1
+        pw_timing = timing_data[1] if isinstance(timing_data, list) and len(timing_data) > 1 else None
+        if not isinstance(pw_timing, dict):
+            pw_timing = {}
+
+        ttfb_ms = int(pw_timing.get("ttfb", 0) or 0)
+        fcp_ms_raw = pw_timing.get("fcp")
+        fcp_ms = int(fcp_ms_raw) if fcp_ms_raw is not None else None
+        dcl_ms = int(pw_timing.get("dcl", 0) or 0)
+
+        # Fallback: use Scrapy download_latency for TTFB if Playwright gave 0
+        if ttfb_ms == 0:
+            download_latency = response.meta.get("download_latency", 0)
+            ttfb_ms = int(download_latency * 1000)
+
         page_size_bytes = len(response.body)
         script_count = len(response.xpath('//script[@src]'))
         stylesheet_count = len(response.xpath('//link[@rel="stylesheet"]'))
@@ -208,23 +386,46 @@ class AuditSpider(scrapy.Spider):
 
         performance = PerformanceMetrics(
             score=0,  # auto-computed by model_validator
-            response_time_ms=response_time_ms,
+            ttfb_ms=ttfb_ms,
+            fcp_ms=fcp_ms,
+            dom_content_loaded_ms=dcl_ms,
             page_size_bytes=page_size_bytes,
             resource_count=resource_count,
         )
 
         # -------------------------------------------------------------------
-        # NEW: Readability data
+        # Readability (fully deterministic — Flesch-Kincaid)
         # -------------------------------------------------------------------
-        word_count = len(text_content.split()) if text_content else 0
+        fk = _compute_flesch_kincaid(text_content)
+        readability_issues: list[dict] = []
+        if fk["word_count"] < 300:
+            readability_issues.append({
+                "severity": "medium",
+                "description": f"Thin content: only {fk['word_count']} words (recommended ≥300)",
+                "suggested_fix": "Expand page content with substantive, original text.",
+            })
+        if fk["flesch_reading_ease"] < 30:
+            readability_issues.append({
+                "severity": "medium",
+                "description": f"Very difficult reading level (FRE {fk['flesch_reading_ease']})",
+                "suggested_fix": "Simplify sentence structure and vocabulary for web audiences.",
+            })
 
         readability = ReadabilityAnalysis(
-            score=0,  # LLM will override
-            word_count=word_count,
+            score=0,  # auto-computed by model_validator
+            word_count=fk["word_count"],
+            sentence_count=fk["sentence_count"],
+            syllable_count=fk["syllable_count"],
+            avg_sentence_length=fk["avg_sentence_length"],
+            avg_syllables_per_word=fk["avg_syllables_per_word"],
+            flesch_reading_ease=fk["flesch_reading_ease"],
+            flesch_kincaid_grade=fk["flesch_kincaid_grade"],
+            reading_level=fk["reading_level"],
+            issues=[Issue(**i) for i in readability_issues],
         )
 
         # -------------------------------------------------------------------
-        # NEW: Security headers
+        # Security headers
         # -------------------------------------------------------------------
         is_https = response.url.startswith("https")
         has_hsts = bool(response.headers.get("Strict-Transport-Security"))
@@ -250,7 +451,7 @@ class AuditSpider(scrapy.Spider):
         )
 
         # -------------------------------------------------------------------
-        # NEW: Accessibility basics
+        # Accessibility (deterministic base + LLM qualitative)
         # -------------------------------------------------------------------
         has_skip_nav = bool(
             response.xpath('//a[contains(translate(@class,"ABCDEFGHIJKLMNOPQRSTUVWXYZ","abcdefghijklmnopqrstuvwxyz"),"skip")]')
@@ -269,20 +470,45 @@ class AuditSpider(scrapy.Spider):
             inp_id = inp.attrib.get("id", "")
             has_aria = inp.attrib.get("aria-label") or inp.attrib.get("aria-labelledby")
             has_label_for = inp_id and inp_id in labeled_by_for
-            # Check if input is wrapped in a <label>
             has_wrapping_label = bool(inp.xpath('ancestor::label'))
             if not has_aria and not has_label_for and not has_wrapping_label:
                 labels_missing += 1
 
+        # Generic link text detection
+        generic_count = 0
+        for a in all_links:
+            link_text = " ".join(a.xpath('.//text()').getall()).strip().lower()
+            if link_text in _GENERIC_LINK_TEXTS:
+                generic_count += 1
+
+        # Tabindex misuse (tabindex > 0 disrupts natural tab order)
+        tabindex_misuse = 0
+        for el in response.xpath('//*[@tabindex]'):
+            try:
+                ti = int(el.attrib.get("tabindex", "0"))
+                if ti > 0:
+                    tabindex_misuse += 1
+            except ValueError:
+                pass
+
+        has_heading = bool(headers.h1 or headers.h2 or headers.h3 or headers.h4_h6_count > 0)
+        has_doc_title = bool(meta_tags.title)
+
         accessibility = AccessibilityAnalysis(
-            score=0,  # LLM will override
+            score=0,  # blended score computed by model_validator
             has_skip_nav=has_skip_nav,
             aria_landmark_count=aria_landmarks,
             form_labels_missing=labels_missing,
+            has_lang_attribute=has_lang,
+            image_alt_coverage_pct=round(alt_pct, 1),
+            generic_link_text_count=generic_count,
+            has_heading_structure=has_heading,
+            tabindex_misuse_count=tabindex_misuse,
+            has_document_title=has_doc_title,
         )
 
         # -------------------------------------------------------------------
-        # NEW: Canonical / redirect analysis
+        # Canonical / redirect analysis
         # -------------------------------------------------------------------
         canonical_url = meta_tags.canonical
         redirect_urls = response.meta.get("redirect_urls", [])
@@ -300,7 +526,7 @@ class AuditSpider(scrapy.Spider):
             has_hreflang=has_hreflang,
         )
 
-        # 2. Call AI Service (Async)
+        # 2. Call AI Service (Async) — only for schema, content, link quality, accessibility quality
         audit_config = self.config.get("audit", {})
         timeout_seconds = float(audit_config.get("llm_timeout_seconds", 60))
         retry_attempts = int(audit_config.get("llm_retry_attempts", 2))
@@ -326,6 +552,7 @@ class AuditSpider(scrapy.Spider):
                     meta_tags=meta_tags,
                     headers=headers,
                     image_stats=image_stats,
+                    onpage_seo=onpage_seo,
                     link_analysis=link_analysis,
                     performance=performance,
                     readability=readability,
@@ -348,20 +575,22 @@ class AuditSpider(scrapy.Spider):
             # Yield a validated error report so schema compliance is guaranteed
             error_report = PageAudit.model_validate({
                 "url": response.url,
+                "audit_status": "failed",
                 "meta_tags": meta_tags.model_dump(),
                 "headers": headers.model_dump(),
                 "image_stats": image_stats.model_dump(),
-                "semantic_analysis": {
+                "onpage_seo": onpage_seo.model_dump(),
+                "schema_analysis": {"score": 0, "detected_types": [], "missing_fields": []},
+                "content_analysis": {
                     "score": 0,
+                    "answers_user_intent": False,
                     "issues": [{"severity": "high", "description": f"Audit failed: {llm_error}", "suggested_fix": "Retry or check logs."}],
                 },
-                "schema_analysis": {"score": 0, "detected_types": [], "missing_fields": []},
-                "content_analysis": {"score": 0, "has_direct_answer": False, "answer_snippet": None},
                 "link_analysis": link_analysis.model_dump(),
                 "performance": performance.model_dump(),
                 "readability": readability.model_dump(),
                 "security": security.model_dump(),
-                "accessibility": {"score": 0, "has_skip_nav": accessibility.has_skip_nav, "aria_landmark_count": accessibility.aria_landmark_count, "form_labels_missing": accessibility.form_labels_missing, "issues": []},
+                "accessibility": accessibility.model_dump(),
                 "canonical_analysis": canonical_analysis.model_dump(),
             })
             yield error_report.model_dump()
@@ -384,7 +613,8 @@ class AuditSpider(scrapy.Spider):
                     meta={
                         "playwright": True,
                         "playwright_page_methods": [
-                            PageMethod("wait_for_load_state", "domcontentloaded")
+                            PageMethod("wait_for_load_state", "networkidle"),
+                            PageMethod("evaluate", _TIMING_JS),
                         ],
                     }
                 )

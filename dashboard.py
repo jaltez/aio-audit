@@ -106,12 +106,12 @@ selected_folder_path = reports_dir / selected_folder_name
 # ---------------------------------------------------------------------------
 
 ALL_DIMENSIONS = [
-    "semantic_score", "schema_score", "content_score",
+    "onpage_seo_score", "schema_score", "content_score",
     "link_score", "performance_score", "readability_score",
     "security_score", "accessibility_score",
 ]
 DIM_LABELS = {
-    "semantic_score": "Semantic",
+    "onpage_seo_score": "On-Page SEO",
     "schema_score": "Schema",
     "content_score": "Content",
     "link_score": "Links",
@@ -123,17 +123,19 @@ DIM_LABELS = {
 
 
 def _score_color_class(v: float) -> str:
-    if v >= 70:
+    """Lighthouse-aligned thresholds: ≥90 green, 50-89 orange, <50 red."""
+    if v >= 90:
         return "score-good"
-    if v >= 40:
+    if v >= 50:
         return "score-ok"
     return "score-bad"
 
 
 def _score_color(v: float) -> str:
-    if v >= 70:
+    """Lighthouse-aligned thresholds for Plotly colors."""
+    if v >= 90:
         return C_GOOD
-    if v >= 40:
+    if v >= 50:
         return C_OK
     return C_BAD
 
@@ -153,7 +155,7 @@ def _plotly_layout(**overrides) -> dict:
     return base
 
 
-_REQUIRED_KEYS = {"url", "semantic_analysis", "schema_analysis", "content_analysis"}
+_REQUIRED_KEYS = {"url", "onpage_seo", "schema_analysis", "content_analysis"}
 
 
 @st.cache_data(ttl=300)
@@ -166,13 +168,25 @@ def load_data(folder_path: str) -> pd.DataFrame:
             with open(file_path, "r", encoding="utf-8") as f:
                 report: dict = json.load(f)
 
+            # --- Backward-compat: migrate old-format reports ------
+            if "semantic_analysis" in report and "onpage_seo" not in report:
+                report["onpage_seo"] = report.pop("semantic_analysis")
+            perf = report.get("performance", {})
+            if "response_time_ms" in perf and "ttfb_ms" not in perf:
+                perf["ttfb_ms"] = perf["response_time_ms"]
+                perf.setdefault("fcp_ms", None)
+                perf.setdefault("dom_content_loaded_ms", None)
+            report.setdefault("audit_status", "complete")
+            # -------------------------------------------------------
+
             missing = _REQUIRED_KEYS - report.keys()
             if missing:
                 st.warning(f"\u26a0\ufe0f {file_path.name} is missing keys: {missing}")
 
             row: dict[str, Any] = {
                 "url": report.get("url", file_path.stem),
-                "semantic_score": report.get("semantic_analysis", {}).get("score", 0),
+                "audit_status": report.get("audit_status", "complete"),
+                "onpage_seo_score": report.get("onpage_seo", {}).get("score", 0),
                 "schema_score": report.get("schema_analysis", {}).get("score", 0),
                 "content_score": report.get("content_analysis", {}).get("score", 0),
                 "link_score": report.get("link_analysis", {}).get("score", 0),
@@ -183,10 +197,10 @@ def load_data(folder_path: str) -> pd.DataFrame:
                 "canonical_score": report.get("canonical_analysis", {}).get("score", 0),
                 "overall_score": report.get("overall_score", 0),
                 "letter_grade": report.get("letter_grade", "F"),
-                "has_direct_answer": report.get("content_analysis", {}).get("has_direct_answer", False),
+                "answers_user_intent": report.get("content_analysis", {}).get("answers_user_intent", False),
                 "issues_count": sum(
                     len(report.get(k, {}).get("issues", []))
-                    for k in ("semantic_analysis", "link_analysis", "readability", "accessibility")
+                    for k in ("onpage_seo", "content_analysis", "link_analysis", "readability", "accessibility")
                 ),
                 "raw_data": report,
             }
@@ -299,9 +313,9 @@ with hero_left:
 
 with hero_right:
     # Radar chart -- site-wide dimension averages
-    dim_names_ordered = ["Semantic", "Schema", "Content", "Links", "Performance", "Readability", "Security", "Accessibility"]
+    dim_names_ordered = ["On-Page SEO", "Schema", "Content", "Links", "Performance", "Readability", "Security", "Accessibility"]
     dim_map = {
-        "Semantic": "semantic_analysis", "Schema": "schema_analysis",
+        "On-Page SEO": "onpage_seo", "Schema": "schema_analysis",
         "Content": "content_analysis", "Links": "link_analysis",
         "Performance": "performance", "Readability": "readability",
         "Security": "security", "Accessibility": "accessibility",
@@ -434,7 +448,7 @@ else:
     all_issues_list: list[dict] = []
     for _, row in filtered_df.iterrows():
         rd = row["raw_data"]
-        for section in ("semantic_analysis", "link_analysis", "readability", "accessibility"):
+        for section in ("onpage_seo", "content_analysis", "link_analysis", "readability", "accessibility"):
             for issue in rd.get(section, {}).get("issues", []):
                 all_issues_list.append({
                     "Severity": issue.get("severity", "medium").upper(),
@@ -459,8 +473,8 @@ st.markdown("---")
 st.header("\U0001f4c4 Page Results")
 
 display_cols = [
-    "url", "letter_grade", "overall_score",
-    "semantic_score", "schema_score", "content_score",
+    "url", "audit_status", "letter_grade", "overall_score",
+    "onpage_seo_score", "schema_score", "content_score",
     "link_score", "performance_score", "readability_score",
     "security_score", "accessibility_score",
     "issues_count",
@@ -477,9 +491,9 @@ def color_scores(val: Any) -> str:
         v = float(val)
     except (ValueError, TypeError):
         return ""
-    if v >= 70:
+    if v >= 90:
         return f"background-color: rgba(34,197,94,0.2); color: {C_GOOD};"
-    if v >= 40:
+    if v >= 50:
         return f"background-color: rgba(234,179,8,0.2); color: {C_OK};"
     return f"background-color: rgba(239,68,68,0.2); color: {C_BAD};"
 
@@ -506,7 +520,7 @@ if selected_url:
 
     tabs = st.tabs([
         "Overview",
-        "Semantic & Issues",
+        "On-Page SEO",
         "Schema",
         "Content & Readability",
         "Links",
@@ -517,6 +531,16 @@ if selected_url:
 
     # ---- Tab 0: Overview ----
     with tabs[0]:
+        # Audit status badge
+        status = page_data.get("audit_status", "complete")
+        status_colors = {"complete": C_GOOD, "partial": C_OK, "failed": C_BAD}
+        status_icon = {"complete": "\u2705", "partial": "\u26a0\ufe0f", "failed": "\u274c"}
+        st.markdown(
+            f'<span style="color:{status_colors.get(status, C_OK)}; font-weight:600;">'
+            f'{status_icon.get(status, "")} Audit Status: {status.upper()}</span>',
+            unsafe_allow_html=True,
+        )
+
         ov_left, ov_right = st.columns([1, 2])
         with ov_left:
             st.markdown(
@@ -528,7 +552,7 @@ if selected_url:
             )
         with ov_right:
             page_scores = {
-                "Semantic": page_data.get("semantic_analysis", {}).get("score", 0),
+                "On-Page SEO": page_data.get("onpage_seo", {}).get("score", 0),
                 "Schema": page_data.get("schema_analysis", {}).get("score", 0),
                 "Content": page_data.get("content_analysis", {}).get("score", 0),
                 "Links": page_data.get("link_analysis", {}).get("score", 0),
@@ -592,15 +616,40 @@ if selected_url:
         ic2.metric("Missing Alt", img.get("missing_alt", 0))
         ic3.metric("Empty Alt", img.get("empty_alt", 0))
 
-    # ---- Tab 1: Semantic & Issues ----
+    # ---- Tab 1: On-Page SEO Checklist ----
     with tabs[1]:
-        sem = page_data.get("semantic_analysis", {})
-        sem_score = sem.get("score", 0)
-        st.subheader(f"Semantic Analysis -- {sem_score}/100")
-        st.progress(max(0.0, min(1.0, sem_score / 100)))
+        ops = page_data.get("onpage_seo", {})
+        ops_score = ops.get("score", 0)
+        st.subheader(f"On-Page SEO -- {ops_score}/100")
+        st.progress(max(0.0, min(1.0, ops_score / 100)))
 
+        st.caption("Deterministic checklist — fully spider-computed, no LLM involved.")
+
+        # Checklist items
+        checks_seo = [
+            ("Title Tag Present", ops.get("has_title", False), "10 pts"),
+            (f"Title Length OK (30-60 chars, actual: {ops.get('title_length', 0)})", ops.get("title_length_ok", False), "10 pts"),
+            ("Meta Description Present", ops.get("has_meta_description", False), "10 pts"),
+            (f"Description Length OK (70-160 chars, actual: {ops.get('description_length', 0)})", ops.get("description_length_ok", False), "5 pts"),
+            (f"Single H1 (count: {ops.get('h1_count', 0)})", ops.get("single_h1", False), "10 pts"),
+            ("Viewport Meta Tag", ops.get("has_viewport_meta", False), "5 pts"),
+            ("Lang Attribute on <html>", ops.get("has_lang_attribute", False), "10 pts"),
+            ("Open Graph Tags", ops.get("has_og_tags", False), "5 pts"),
+            ("Robots Allows Indexing", ops.get("robots_allows_indexing", True), "10 pts"),
+            (f"Image Alt Coverage ({ops.get('image_alt_coverage_pct', 100):.0f}%)", ops.get("image_alt_coverage_pct", 100) >= 90, "15 pts (proportional)"),
+            ("Canonical URL Present", ops.get("has_canonical", False), "10 pts"),
+        ]
+        for label, passed, weight in checks_seo:
+            icon = "\u2705" if passed else "\u274c"
+            cls = "check-pass" if passed else "check-fail"
+            st.markdown(
+                f'<span class="{cls}">{icon} {label}</span> <span style="opacity:0.55;">({weight})</span>',
+                unsafe_allow_html=True,
+            )
+
+        # Header structure
         hdrs = page_data.get("headers", {})
-        with st.expander("Header Structure", expanded=True):
+        with st.expander("Header Structure", expanded=False):
             hc1, hc2, hc3, hc4 = st.columns(4)
             hc1.metric("H1", len(hdrs.get("h1", [])))
             hc2.metric("H2", len(hdrs.get("h2", [])))
@@ -611,8 +660,9 @@ if selected_url:
                 if vals:
                     st.caption(f"**{tag.upper()}:** {', '.join(vals)}")
 
-        issues = sem.get("issues", [])
+        issues = ops.get("issues", [])
         if issues:
+            st.subheader("Issues")
             for issue in issues:
                 sev = issue.get("severity", "unknown")
                 desc = issue.get("description", "")
@@ -622,7 +672,7 @@ if selected_url:
                     st.write(f"**Description:** {desc}")
                     st.write(f"**Suggested Fix:** {issue.get('suggested_fix', 'N/A')}")
         else:
-            st.success("No semantic issues found!")
+            st.success("No on-page SEO issues found!")
 
     # ---- Tab 2: Schema ----
     with tabs[2]:
@@ -656,29 +706,60 @@ if selected_url:
         st.subheader(f"Content Analysis -- {cnt_score}/100")
         st.progress(max(0.0, min(1.0, cnt_score / 100)))
 
-        if cnt.get("has_direct_answer"):
-            st.success("\u2705 This page provides a direct answer!")
-            snippet = cnt.get("answer_snippet")
-            if snippet:
-                st.info(f"**Snippet:** {snippet}")
+        if cnt.get("answers_user_intent"):
+            st.success("\u2705 Page provides content aligned with user intent.")
         else:
-            st.warning("No direct answer structure detected.")
+            st.warning("\u26a0\ufe0f Content may not adequately answer user queries.")
+
+        snippet = cnt.get("answer_snippet")
+        if snippet:
+            st.info(f"**Best Snippet:** {snippet}")
+
+        uniqueness = cnt.get("content_uniqueness_note")
+        if uniqueness:
+            st.caption(f"**Content Assessment:** {uniqueness}")
+
+        cnt_issues = cnt.get("issues", [])
+        if cnt_issues:
+            for issue in cnt_issues:
+                sev = issue.get("severity", "medium")
+                with st.expander(f"{sev.upper()}: {issue.get('description', '')}"):
+                    st.write(f"**Fix:** {issue.get('suggested_fix', 'N/A')}")
 
         st.markdown("---")
         rda = page_data.get("readability", {})
         rda_score = rda.get("score", 0)
         st.subheader(f"Readability -- {rda_score}/100")
         st.progress(max(0.0, min(1.0, rda_score / 100)))
+        st.caption("Deterministic — computed using Flesch-Kincaid formula, no LLM involved.")
 
-        rc1, rc2, rc3 = st.columns(3)
+        rc1, rc2, rc3, rc4 = st.columns(4)
         rc1.metric("Word Count", rda.get("word_count", 0))
         rc2.metric("Reading Level", rda.get("reading_level") or "N/A")
-        thin = rda.get("thin_content", False)
-        rc3.metric("Thin Content", "\u26a0\ufe0f Yes" if thin else "\u2705 No")
+        fre = rda.get("flesch_reading_ease", 0)
+        rc3.metric("Flesch Reading Ease", f"{fre:.1f}")
+        fkg = rda.get("flesch_kincaid_grade", 0)
+        rc4.metric("FK Grade Level", f"{fkg:.1f}")
 
-        kdn = rda.get("keyword_density_notes")
-        if kdn:
-            st.info(f"**Keyword Notes:** {kdn}")
+        rc5, rc6, rc7 = st.columns(3)
+        rc5.metric("Sentences", rda.get("sentence_count", 0))
+        rc6.metric("Avg Sentence Length", f"{rda.get('avg_sentence_length', 0):.1f} words")
+        thin = rda.get("thin_content", False)
+        rc7.metric("Thin Content", "\u26a0\ufe0f Yes" if thin else "\u2705 No")
+
+        # FK interpretation guide
+        with st.expander("Flesch Reading Ease Interpretation"):
+            st.markdown("""
+| FRE Score | Difficulty | Audience |
+|-----------|-----------|----------|
+| 90-100 | Very Easy | 5th grade |
+| 80-89 | Easy | 6th grade |
+| 70-79 | Fairly Easy | 7th grade |
+| 60-69 | Standard | 8th-9th grade |
+| 50-59 | Fairly Difficult | 10th-12th grade |
+| 30-49 | Difficult | College |
+| 0-29 | Very Difficult | Graduate |
+            """)
 
         rda_issues = rda.get("issues", [])
         if rda_issues:
@@ -732,32 +813,48 @@ if selected_url:
         perf_score = perf.get("score", 0)
         st.subheader(f"Performance -- {perf_score}/100")
         st.progress(max(0.0, min(1.0, perf_score / 100)))
+        st.caption("Deterministic — computed from Playwright timing and page metrics, no LLM involved.")
 
-        pc1, pc2, pc3 = st.columns(3)
-        rt_ms = perf.get("response_time_ms", 0)
+        pc1, pc2, pc3, pc4, pc5 = st.columns(5)
+        ttfb = perf.get("ttfb_ms", 0)
+        fcp = perf.get("fcp_ms")
+        dcl = perf.get("dom_content_loaded_ms", 0)
         ps_bytes = perf.get("page_size_bytes", 0)
         res_count = perf.get("resource_count", 0)
 
-        pc1.metric("Response Time", f"{rt_ms} ms")
-        pc2.metric("Page Size", f"{ps_bytes / 1024:.1f} KB")
-        pc3.metric("Resources", res_count)
+        pc1.metric("TTFB", f"{ttfb} ms")
+        pc2.metric("FCP", f"{fcp} ms" if fcp is not None else "N/A")
+        pc3.metric("DOM Loaded", f"{dcl} ms")
+        pc4.metric("Page Size", f"{ps_bytes / 1024:.1f} KB")
+        pc5.metric("Resources", res_count)
 
+        # Web Vitals thresholds reference
+        with st.expander("Web Vitals Thresholds"):
+            st.markdown("""
+| Metric | Good | Needs Work | Poor |
+|--------|------|------------|------|
+| TTFB | ≤800ms | ≤1800ms | >1800ms |
+| FCP | ≤1800ms | ≤3000ms | >3000ms |
+| Page Size | ≤500KB | ≤1MB | >2MB |
+| Resources | ≤30 | ≤60 | >100 |
+            """)
+
+        # TTFB gauge chart
         fig_gauge = go.Figure(go.Indicator(
             mode="gauge+number",
-            value=rt_ms,
+            value=ttfb,
             number=dict(suffix=" ms"),
             gauge=dict(
-                axis=dict(range=[0, 5000]),
-                bar=dict(color=_score_color(perf_score)),
+                axis=dict(range=[0, 3000]),
+                bar=dict(color=_score_color(100 if ttfb <= 800 else (50 if ttfb <= 1800 else 0))),
                 bgcolor="#21262d",
                 steps=[
-                    dict(range=[0, 500], color="rgba(34,197,94,0.15)"),
-                    dict(range=[500, 1000], color="rgba(59,130,246,0.15)"),
-                    dict(range=[1000, 2000], color="rgba(234,179,8,0.15)"),
-                    dict(range=[2000, 5000], color="rgba(239,68,68,0.15)"),
+                    dict(range=[0, 800], color="rgba(34,197,94,0.15)"),
+                    dict(range=[800, 1800], color="rgba(234,179,8,0.15)"),
+                    dict(range=[1800, 3000], color="rgba(239,68,68,0.15)"),
                 ],
             ),
-            title=dict(text="Response Time"),
+            title=dict(text="Time to First Byte"),
         ))
         fig_gauge.update_layout(
             **_plotly_layout(),
@@ -798,16 +895,40 @@ if selected_url:
     with tabs[7]:
         a11y = page_data.get("accessibility", {})
         a11y_score = a11y.get("score", 0)
+        llm_score = a11y.get("llm_score")
         st.subheader(f"Accessibility -- {a11y_score}/100")
         st.progress(max(0.0, min(1.0, a11y_score / 100)))
+        st.caption("Blended score: 50% deterministic checklist + 50% LLM qualitative assessment.")
 
-        ac1, ac2, ac3 = st.columns(3)
-        ac1.metric("Skip Nav", "\u2705 Yes" if a11y.get("has_skip_nav") else "\u274c No")
+        if llm_score is not None:
+            st.markdown(f"**LLM Qualitative Score:** {llm_score}/100")
+
+        # Deterministic checklist
+        a11y_checks = [
+            ("Skip Navigation Link", a11y.get("has_skip_nav", False), "15 pts"),
+            ("Lang Attribute on <html>", a11y.get("has_lang_attribute", False), "15 pts"),
+            ("Document Title", a11y.get("has_document_title", False), "10 pts"),
+            ("Heading Structure", a11y.get("has_heading_structure", False), "10 pts"),
+            (f"Image Alt Coverage ({a11y.get('image_alt_coverage_pct', 100):.0f}%)", a11y.get("image_alt_coverage_pct", 100) >= 90, "20 pts (proportional)"),
+            (f"Form Labels (missing: {a11y.get('form_labels_missing', 0)})", a11y.get("form_labels_missing", 0) == 0, "10 pts"),
+            (f"No Generic Link Text (found: {a11y.get('generic_link_text_count', 0)})", a11y.get("generic_link_text_count", 0) == 0, "10 pts"),
+            (f"No Tabindex Misuse (found: {a11y.get('tabindex_misuse_count', 0)})", a11y.get("tabindex_misuse_count", 0) == 0, "10 pts"),
+        ]
+        for label, passed, weight in a11y_checks:
+            icon = "\u2705" if passed else "\u274c"
+            cls = "check-pass" if passed else "check-fail"
+            st.markdown(
+                f'<span class="{cls}">{icon} {label}</span> <span style="opacity:0.55;">({weight})</span>',
+                unsafe_allow_html=True,
+            )
+
+        ac2, ac3 = st.columns(2)
         ac2.metric("ARIA Landmarks", a11y.get("aria_landmark_count", 0))
         ac3.metric("Missing Form Labels", a11y.get("form_labels_missing", 0))
 
         a11y_issues = a11y.get("issues", [])
         if a11y_issues:
+            st.subheader("LLM-Identified Issues")
             for issue in a11y_issues:
                 sev = issue.get("severity", "medium")
                 with st.expander(f"{sev.upper()}: {issue.get('description', '')}"):

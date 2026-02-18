@@ -11,6 +11,7 @@ from openai import AsyncOpenAI
 
 from ai_seo_auditor.models.schemas import (
     PageAudit, MetaTags, HeaderStructure, ImageStats,
+    OnPageSeoChecklist,
     LinkAnalysis, PerformanceMetrics, ReadabilityAnalysis,
     SecurityCheck, AccessibilityAnalysis, CanonicalAnalysis,
 )
@@ -73,7 +74,6 @@ def _resolve_refs(node: Any, defs: dict[str, Any]) -> Any:
         if "$ref" in node:
             ref_name = node["$ref"].rsplit("/", 1)[-1]
             resolved = defs.get(ref_name, node)
-            # Recursively resolve in case the definition itself has $ref
             return _resolve_refs(copy.deepcopy(resolved), defs)
         return {k: _resolve_refs(v, defs) for k, v in node.items()}
     if isinstance(node, list):
@@ -83,16 +83,21 @@ def _resolve_refs(node: Any, defs: dict[str, Any]) -> Any:
 
 def _build_flat_schema() -> dict[str, Any]:
     """Return the PageAudit JSON schema with all ``$defs`` inlined and
-    injected fields (url, meta_tags, headers, image_stats) removed."""
+    non-LLM fields removed.
+
+    The LLM now only produces 4 dimensions:
+      schema_analysis, content_analysis, link_analysis, accessibility
+    Everything else is spider-computed and injected post-hoc.
+    """
     schema = copy.deepcopy(PageAudit.model_json_schema())
     defs = schema.pop("$defs", {})
     schema = _resolve_refs(schema, defs)
 
-    # Drop fields the LLM should NOT produce (they are injected post-hoc)
+    # Fields the LLM should NOT produce
     _injected = {
-        "url", "meta_tags", "headers", "image_stats",
-        # Spider-computed dimensions (no LLM involvement)
-        "performance", "security", "canonical_analysis",
+        "url", "audit_status", "meta_tags", "headers", "image_stats",
+        # Fully spider-computed dimensions
+        "onpage_seo", "performance", "readability", "security", "canonical_analysis",
         # Computed properties
         "overall_score", "letter_grade",
     }
@@ -101,8 +106,7 @@ def _build_flat_schema() -> dict[str, Any]:
     if "required" in schema:
         schema["required"] = [r for r in schema["required"] if r not in _injected]
 
-    # For LLM-scored dimensions that also carry spider-injected sub-fields,
-    # strip those sub-fields from the schema so the LLM only produces what it should.
+    # link_analysis: strip spider-populated sub-fields
     _link_spider_fields = {"internal_links", "external_links", "nofollow_count", "broken_links"}
     link_props = schema.get("properties", {}).get("link_analysis", {}).get("properties", {})
     for f in _link_spider_fields:
@@ -113,17 +117,13 @@ def _build_flat_schema() -> dict[str, Any]:
             r for r in link_req if r not in _link_spider_fields
         ]
 
-    _read_spider_fields = {"word_count", "thin_content"}
-    read_props = schema.get("properties", {}).get("readability", {}).get("properties", {})
-    for f in _read_spider_fields:
-        read_props.pop(f, None)
-    read_req = schema.get("properties", {}).get("readability", {}).get("required", [])
-    if read_req:
-        schema["properties"]["readability"]["required"] = [
-            r for r in read_req if r not in _read_spider_fields
-        ]
-
-    _a11y_spider_fields = {"has_skip_nav", "aria_landmark_count", "form_labels_missing"}
+    # accessibility: strip spider-populated sub-fields, keep only llm_score + issues
+    _a11y_spider_fields = {
+        "has_skip_nav", "aria_landmark_count", "form_labels_missing",
+        "has_lang_attribute", "image_alt_coverage_pct", "generic_link_text_count",
+        "has_heading_structure", "tabindex_misuse_count", "has_document_title",
+        "score",  # score is computed from blended formula, LLM provides llm_score
+    }
     a11y_props = schema.get("properties", {}).get("accessibility", {}).get("properties", {})
     for f in _a11y_spider_fields:
         a11y_props.pop(f, None)
@@ -135,8 +135,10 @@ def _build_flat_schema() -> dict[str, Any]:
 
     return schema
 
+
 # Cache the flattened schema — it never changes at runtime.
 _FLAT_SCHEMA: dict[str, Any] | None = None
+
 
 def _get_flat_schema() -> dict[str, Any]:
     global _FLAT_SCHEMA
@@ -162,36 +164,53 @@ SCORING RUBRIC (all scores are integers 0-100):
 - 75  = mostly correct, minor improvements needed
 - 100 = best practice fully implemented
 
-IMPORTANT schema_analysis scoring rules:
-- If NO JSON-LD schemas are detected, schema_analysis.score MUST be 0.
-- Score above 50 ONLY when valid, relevant structured data is present and reasonably complete.
+SEVERITY DEFINITIONS for issues:
+- "high"   = blocks indexing or renders page unusable for search/screen readers
+- "medium" = degrades ranking potential or user experience noticeably
+- "low"    = optimization opportunity, nice-to-have improvement
 
-severity must be exactly one of: "high", "medium", "low".
+YOU MUST SCORE EXACTLY 4 DIMENSIONS:
 
-DIMENSIONS YOU MUST SCORE:
-1. semantic_analysis -- header hierarchy, content-title match, on-page SEO issues.
-2. schema_analysis -- JSON-LD quality. score=0 when no JSON-LD.
-3. content_analysis -- direct-answer availability and conciseness.
-4. link_analysis -- evaluate anchor text quality, link distribution, and issues. \
-You receive link counts as context; score the QUALITATIVE aspects.
-5. readability -- reading level, keyword usage, content quality. \
-You receive word_count as context; provide reading_level (e.g. "Grade 8"), \
-keyword_density_notes, and a score.
-6. accessibility -- evaluate the page for basic a11y: color contrast hints, \
-semantic HTML usage, ARIA utilisation. You receive structural stats as context.
+1. schema_analysis — JSON-LD structured data quality.
+   RULE: If detected_types is empty, score MUST be 0.
+   - List all detected @type values in detected_types.
+   - List missing recommended fields for those types in missing_fields.
+   - Score above 50 ONLY when valid, relevant structured data is present.
 
-Dimensions you do NOT score (they are auto-computed):
-- performance, security, canonical_analysis -- do NOT include these.
+2. content_analysis — user-intent alignment and content quality.
+   - answers_user_intent: Does the page provide useful/original content for \
+its apparent topic? (true/false)
+   - content_uniqueness_note: Brief assessment — is the content mostly \
+boilerplate/navigation or does it contain substantive original text?
+   - answer_snippet: A short excerpt (≤500 chars) of the best direct-answer \
+content, or null if none.
+   - issues: Any content quality problems.
+   Scoring guide:
+     90-100 = rich original content directly answering user queries
+     70-89  = decent content with minor gaps
+     50-69  = thin or partially useful content
+     30-49  = mostly boilerplate or navigation
+     0-29   = no useful content
+
+3. link_analysis — anchor text quality and link distribution.
+   You receive link counts (internal, external, nofollow) as context.
+   Score the QUALITATIVE aspects: descriptive vs generic anchor text, \
+appropriate link distribution, any broken or problematic patterns.
+   - issues: Array of link quality problems with severity.
+
+4. accessibility — qualitative accessibility assessment.
+   You receive structural stats as context (skip-nav, landmarks, labels, etc.).
+   Evaluate semantic HTML usage, ARIA patterns, color contrast hints, \
+form labeling, and any a11y issues visible in the HTML.
+   - llm_score: Your qualitative accessibility score (0-100).
+   - issues: Array of accessibility problems with severity.
+   NOTE: Do NOT include "score" — only "llm_score" and "issues".
+
+Dimensions you do NOT score (auto-computed by spider — do NOT include):
+- onpage_seo, performance, readability, security, canonical_analysis
 
 EXAMPLE OUTPUT:
 {
-  "semantic_analysis": {
-    "score": 30,
-    "issues": [
-      {"severity": "high", "description": "Missing H1 heading tag.", "suggested_fix": "Add a single descriptive H1 element."},
-      {"severity": "medium", "description": "Heading hierarchy skips from H2 to H4.", "suggested_fix": "Use sequential heading levels without gaps."}
-    ]
-  },
   "schema_analysis": {
     "score": 0,
     "detected_types": [],
@@ -199,25 +218,23 @@ EXAMPLE OUTPUT:
   },
   "content_analysis": {
     "score": 45,
-    "has_direct_answer": false,
-    "answer_snippet": null
+    "answers_user_intent": false,
+    "content_uniqueness_note": "Page is mostly product listings with minimal descriptive text.",
+    "answer_snippet": null,
+    "issues": [
+      {"severity": "medium", "description": "Content is primarily navigation links with little original text.", "suggested_fix": "Add descriptive category overview text."}
+    ]
   },
   "link_analysis": {
     "score": 60,
     "issues": [
-      {"severity": "medium", "description": "Most anchor texts are generic (click here).", "suggested_fix": "Use descriptive anchor text."}
+      {"severity": "medium", "description": "Most anchor texts are generic ('click here').", "suggested_fix": "Use descriptive anchor text that indicates the link destination."}
     ]
   },
-  "readability": {
-    "score": 55,
-    "reading_level": "Grade 10",
-    "keyword_density_notes": "Primary keyword appears only once in 1200 words.",
-    "issues": []
-  },
   "accessibility": {
-    "score": 40,
+    "llm_score": 40,
     "issues": [
-      {"severity": "high", "description": "Images lack alt text.", "suggested_fix": "Add descriptive alt attributes to all images."}
+      {"severity": "high", "description": "Images lack alt text.", "suggested_fix": "Add descriptive alt attributes to all informative images."}
     ]
   }
 }
@@ -233,7 +250,10 @@ JSON-LD: {json_ld}
 
 LINK STATS: internal={internal_links}, external={external_links}, nofollow={nofollow_count}
 WORD COUNT: {word_count}
-ACCESSIBILITY STATS: skip_nav={has_skip_nav}, aria_landmarks={aria_landmarks}, form_labels_missing={form_labels_missing}
+ACCESSIBILITY STATS: skip_nav={has_skip_nav}, aria_landmarks={aria_landmarks}, \
+form_labels_missing={form_labels_missing}, lang_attr={has_lang}, \
+generic_link_texts={generic_links}, tabindex_misuse={tabindex_misuse}, \
+image_alt_coverage={alt_coverage}%
 
 HTML SNIPPET (Cleaned):
 {html}
@@ -242,18 +262,16 @@ TEXT CONTENT:
 {text}
 
 Return ONLY a JSON object matching the following schema. Do NOT include \
-url, meta_tags, headers, image_stats, performance, security, or \
-canonical_analysis -- they are injected automatically.
+url, meta_tags, headers, image_stats, onpage_seo, performance, readability, \
+security, or canonical_analysis — they are injected automatically.
 
 {schema}
 
-Evaluate these 6 dimensions:
-1. semantic_analysis -- header hierarchy, content-title match, SEO issues.
-2. schema_analysis -- JSON-LD quality. If no JSON-LD detected, score MUST be 0.
-3. content_analysis -- direct-answer availability and conciseness.
-4. link_analysis -- anchor text quality, link distribution issues (score + issues array).
-5. readability -- reading_level, keyword_density_notes, score, issues array.
-6. accessibility -- a11y issues, score, issues array.
+Evaluate exactly these 4 dimensions:
+1. schema_analysis — JSON-LD quality. If no JSON-LD detected, score MUST be 0.
+2. content_analysis — user-intent alignment, content originality, quality.
+3. link_analysis — anchor text quality, link distribution (score + issues).
+4. accessibility — qualitative a11y assessment (llm_score + issues only).
 """
 
 
@@ -265,6 +283,7 @@ async def analyze_with_llm(
     meta_tags: MetaTags,
     headers: HeaderStructure,
     image_stats: ImageStats,
+    onpage_seo: OnPageSeoChecklist,
     link_analysis: LinkAnalysis,
     performance: PerformanceMetrics,
     readability: ReadabilityAnalysis,
@@ -276,7 +295,12 @@ async def analyze_with_llm(
     retry_base_delay: Optional[float] = None,
     logger: Optional[logging.Logger] = None,
 ) -> PageAudit:
-    """Analyze page content using the configured LLM and return a validated PageAudit."""
+    """Analyze page content using the configured LLM and return a validated PageAudit.
+
+    The LLM only produces 4 dimensions: schema_analysis, content_analysis,
+    link_analysis (score+issues), and accessibility (llm_score+issues).
+    All other dimensions are spider-computed and injected post-hoc.
+    """
 
     flat_schema = _get_flat_schema()
 
@@ -295,6 +319,10 @@ async def analyze_with_llm(
         has_skip_nav=accessibility.has_skip_nav,
         aria_landmarks=accessibility.aria_landmark_count,
         form_labels_missing=accessibility.form_labels_missing,
+        has_lang=accessibility.has_lang_attribute,
+        generic_links=accessibility.generic_link_text_count,
+        tabindex_misuse=accessibility.tabindex_misuse_count,
+        alt_coverage=accessibility.image_alt_coverage_pct,
         schema=json.dumps(flat_schema, indent=2),
     )
 
@@ -303,6 +331,7 @@ async def analyze_with_llm(
     retry_base_delay = retry_base_delay if retry_base_delay is not None else LLM_RETRY_BASE_DELAY_SECONDS
     last_error: Optional[Exception] = None
     data: Optional[dict] = None
+    audit_status = "complete"
     client = _get_client()
 
     for attempt in range(retry_attempts + 1):
@@ -349,34 +378,45 @@ async def analyze_with_llm(
                 break
 
     if data is None:
+        audit_status = "failed"
         fallback_issue = {
             "severity": "high",
             "description": f"LLM analysis failed: {last_error}",
             "suggested_fix": "Retry the audit or inspect the LLM service logs.",
         }
         data = {
-            "semantic_analysis": {"score": 0, "issues": [fallback_issue]},
             "schema_analysis": {"score": 0, "detected_types": [], "missing_fields": []},
-            "content_analysis": {"score": 0, "has_direct_answer": False, "answer_snippet": None},
+            "content_analysis": {
+                "score": 0,
+                "answers_user_intent": False,
+                "issues": [fallback_issue],
+            },
             "link_analysis": {"score": 0, "issues": []},
-            "readability": {"score": 0, "reading_level": None, "keyword_density_notes": None, "issues": []},
-            "accessibility": {"score": 0, "issues": []},
+            "accessibility": {"llm_score": 0, "issues": []},
         }
 
     # Backfill defaults for any top-level fields the LLM omitted
     _FIELD_DEFAULTS: dict[str, Any] = {
-        "semantic_analysis": {"score": 0, "issues": []},
-        "schema_analysis":   {"score": 0, "detected_types": [], "missing_fields": []},
-        "content_analysis":  {"score": 0, "has_direct_answer": False, "answer_snippet": None},
-        "link_analysis":     {"score": 0, "issues": []},
-        "readability":       {"score": 0, "reading_level": None, "keyword_density_notes": None, "issues": []},
-        "accessibility":     {"score": 0, "issues": []},
+        "schema_analysis":  {"score": 0, "detected_types": [], "missing_fields": []},
+        "content_analysis": {"score": 0, "answers_user_intent": False, "issues": []},
+        "link_analysis":    {"score": 0, "issues": []},
+        "accessibility":    {"llm_score": 0, "issues": []},
     }
     for key, default in _FIELD_DEFAULTS.items():
         if key not in data:
             if logger:
                 logger.warning("LLM response missing '%s' for %s — using defaults", key, url)
             data[key] = default
+        else:
+            # If the LLM returned "partial" data, mark as partial
+            pass
+
+    # Check if any expected dimension was filled with defaults
+    if audit_status == "complete":
+        expected_keys = {"schema_analysis", "content_analysis", "link_analysis", "accessibility"}
+        missing = expected_keys - set(data.keys())
+        if missing:
+            audit_status = "partial"
 
     # --- Merge spider-extracted sub-fields into LLM-scored dimensions ---
     # link_analysis: LLM provides score+issues; spider provides counts
@@ -387,24 +427,30 @@ async def analyze_with_llm(
     la["broken_links"] = link_analysis.broken_links
     data["link_analysis"] = la
 
-    # readability: LLM provides score+reading_level+keyword notes; spider provides word_count
-    rd = data.get("readability", {})
-    rd["word_count"] = readability.word_count
-    data["readability"] = rd
-
-    # accessibility: LLM provides score+issues; spider provides structural data
+    # accessibility: LLM provides llm_score+issues; spider provides structural data
     a11y = data.get("accessibility", {})
     a11y["has_skip_nav"] = accessibility.has_skip_nav
     a11y["aria_landmark_count"] = accessibility.aria_landmark_count
     a11y["form_labels_missing"] = accessibility.form_labels_missing
+    a11y["has_lang_attribute"] = accessibility.has_lang_attribute
+    a11y["image_alt_coverage_pct"] = accessibility.image_alt_coverage_pct
+    a11y["generic_link_text_count"] = accessibility.generic_link_text_count
+    a11y["has_heading_structure"] = accessibility.has_heading_structure
+    a11y["tabindex_misuse_count"] = accessibility.tabindex_misuse_count
+    a11y["has_document_title"] = accessibility.has_document_title
+    # Ensure score field exists for the blended calculation validator
+    a11y.setdefault("score", 0)
     data["accessibility"] = a11y
 
     # Inject fully spider-computed fields
     data["url"] = url
+    data["audit_status"] = audit_status
     data["meta_tags"] = meta_tags.model_dump()
     data["headers"] = headers.model_dump()
     data["image_stats"] = image_stats.model_dump()
+    data["onpage_seo"] = onpage_seo.model_dump()
     data["performance"] = performance.model_dump()
+    data["readability"] = readability.model_dump()
     data["security"] = security.model_dump()
     data["canonical_analysis"] = canonical_analysis.model_dump()
 

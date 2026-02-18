@@ -41,6 +41,7 @@ class JsonReportPipeline:
     def process_item(self, item: Any, spider: scrapy.Spider) -> Any:
         adapter = ItemAdapter(item)
         url = adapter.get("url", "unknown_url")
+        audit_status = adapter.get("audit_status", "complete")
 
         safe_name = self._build_safe_filename(url)
         filename = self.reports_dir / f"{safe_name}.json"
@@ -53,7 +54,7 @@ class JsonReportPipeline:
             return item
 
         # Collect per-page scores
-        sem = adapter.get("semantic_analysis", {}).get("score", 0)
+        ops = adapter.get("onpage_seo", {}).get("score", 0)
         sch = adapter.get("schema_analysis", {}).get("score", 0)
         cnt = adapter.get("content_analysis", {}).get("score", 0)
         lnk = adapter.get("link_analysis", {}).get("score", 0)
@@ -65,7 +66,7 @@ class JsonReportPipeline:
 
         # Compute overall score using weights
         scores_dict = {
-            "semantic_analysis": sem,
+            "onpage_seo": ops,
             "schema_analysis": sch,
             "content_analysis": cnt,
             "link_analysis": lnk,
@@ -76,9 +77,9 @@ class JsonReportPipeline:
         }
         overall = round(sum(scores_dict[k] * DEFAULT_SCORE_WEIGHTS[k] for k in DEFAULT_SCORE_WEIGHTS), 1)
 
-        # Count issues for this page
+        # Count issues for this page — collect from all dimensions that have issues
         issues_count = 0
-        for section_key in ("semantic_analysis", "link_analysis", "readability", "accessibility"):
+        for section_key in ("onpage_seo", "content_analysis", "link_analysis", "readability", "accessibility"):
             section_issues = adapter.get(section_key, {}).get("issues", [])
             issues_count += len(section_issues)
             for issue in section_issues:
@@ -90,7 +91,8 @@ class JsonReportPipeline:
 
         entry = PageScoreEntry(
             url=url,
-            semantic_score=sem,
+            audit_status=audit_status,
+            onpage_seo_score=ops,
             schema_score=sch,
             content_score=cnt,
             link_score=lnk,
@@ -117,9 +119,13 @@ class JsonReportPipeline:
 
             total = len(self._page_scores)
 
+            # Only include complete/partial audits in averages (exclude failed)
+            valid_pages = [p for p in self._page_scores if p.audit_status != "failed"]
+            valid_count = len(valid_pages) or 1  # avoid div-by-zero
+
             # Dimension averages
             dim_keys = [
-                ("semantic_score", "semantic_analysis"),
+                ("onpage_seo_score", "onpage_seo"),
                 ("schema_score", "schema_analysis"),
                 ("content_score", "content_analysis"),
                 ("link_score", "link_analysis"),
@@ -132,11 +138,11 @@ class JsonReportPipeline:
             dimension_averages = {}
             for attr, label in dim_keys:
                 dimension_averages[label] = round(
-                    sum(getattr(p, attr) for p in self._page_scores) / total, 1
+                    sum(getattr(p, attr) for p in valid_pages) / valid_count, 1
                 )
 
             overall_avg = round(
-                sum(p.overall_score for p in self._page_scores) / total, 1
+                sum(p.overall_score for p in valid_pages) / valid_count, 1
             )
 
             # Best / worst pages (by overall_score)

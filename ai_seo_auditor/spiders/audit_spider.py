@@ -126,7 +126,7 @@ class AuditSpider(scrapy.Spider):
         super().__init__(*args, **kwargs)
 
         # Load config from yaml file located at project root
-        config_path = Path(__file__).resolve().parents[2] / 'config.yaml'
+        config_path = Path(__file__).resolve().parents[1] / 'config.yaml'
         self.config: dict = {}
         if config_path.exists():
             with open(config_path, 'r') as f:

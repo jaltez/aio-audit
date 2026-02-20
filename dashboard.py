@@ -81,7 +81,13 @@ st.markdown("# \U0001f50d AI SEO Auditor")
 # ---------------------------------------------------------------------------
 st.sidebar.header("Report")
 
-reports_dir = Path("ai_seo_auditor/reports")
+project_root = Path(__file__).resolve().parent
+reports_dir = project_root / "reports"
+legacy_reports_dir = project_root / "ai_seo_auditor" / "reports"
+
+if not reports_dir.exists() and legacy_reports_dir.exists():
+    reports_dir = legacy_reports_dir
+
 if not reports_dir.exists():
     st.error("No 'reports' directory found. Run the crawler first!")
     st.stop()
@@ -91,6 +97,16 @@ report_folders = sorted(
     key=lambda x: x.stat().st_mtime,
     reverse=True,
 )
+
+
+def _page_report_count(folder: Path) -> int:
+    return sum(1 for p in folder.glob("*.json") if not p.name.startswith("_"))
+
+
+non_empty_report_folders = [f for f in report_folders if _page_report_count(f) > 0]
+
+if non_empty_report_folders:
+    report_folders = non_empty_report_folders
 
 if not report_folders:
     st.warning("No reports found in the **reports** directory.")

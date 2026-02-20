@@ -7,3 +7,4 @@ __pycache__/
 *$py.class
 output.json
 reports/
+*.egg-info/

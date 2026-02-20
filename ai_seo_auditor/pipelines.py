@@ -18,6 +18,7 @@ from ai_seo_auditor.models.schemas import (
 
 class JsonReportPipeline:
     _invalid_filename_chars = re.compile(r"[<>:\"/\\|?*]+")
+    _project_root = Path(__file__).resolve().parents[1]
 
     def open_spider(self, spider: scrapy.Spider) -> None:
         # Determine root domain from the first start_url
@@ -30,7 +31,7 @@ class JsonReportPipeline:
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         folder_name = f"{domain}_{timestamp}"
 
-        self.reports_dir = Path("reports") / folder_name
+        self.reports_dir = self._project_root / "reports" / folder_name
         self.reports_dir.mkdir(parents=True, exist_ok=True)
         self._page_scores: List[PageScoreEntry] = []
         # Collect all issues across pages for aggregation

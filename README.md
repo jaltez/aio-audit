@@ -1,13 +1,14 @@
 # AI SEO Auditor
 
-Automated SEO and AI-readiness auditing with Scrapy + Playwright + LLM scoring, plus a Streamlit dashboard.
+Automated SEO and AI-readiness auditing with Scrapy + Playwright + LLM scoring, plus a custom React + FastAPI command center.
 
 ## What it does
 
 - Crawls pages and extracts deterministic technical signals.
 - Uses an LLM for qualitative scoring where needed.
 - Produces per-page JSON reports and a site summary.
-- Visualizes results in a dashboard with filtering and drill-downs.
+- Serves reports through a FastAPI API.
+- Visualizes results with a React command center.
 
 ## Prerequisites
 
@@ -19,7 +20,8 @@ Automated SEO and AI-readiness auditing with Scrapy + Playwright + LLM scoring, 
 
 - Crawl config: `ai_seo_auditor/config.yaml`
 - Scrapy project code: `ai_seo_auditor/`
-- Dashboard entrypoint: `dashboard.py`
+- API backend: `backend/main.py`
+- Frontend app: `frontend/`
 - Reports output (default): `reports/`
 
 ## Setup (from repository root)
@@ -69,22 +71,40 @@ Run with overrides:
 uv run scrapy crawl audit -a url=https://example.com -a max_depth=1 -a max_pages=5
 ```
 
-Open dashboard:
+Run API backend:
 
 ```bash
-uv run streamlit run dashboard.py
+uv run uvicorn backend.main:app --reload
 ```
 
-Fast path after initial setup (skips sync checks):
+Run frontend:
 
 ```bash
-uv run --no-sync scrapy crawl audit
-uv run --no-sync streamlit run dashboard.py
+cd frontend
+npm install
+npm run dev
 ```
 
-## Cross-platform notes
+Run both with one command:
 
-The `uv` commands above are identical on PowerShell, CMD, macOS, and Linux shells.
+```bash
+uv run python run_dev.py
+```
+
+The frontend defaults to `http://127.0.0.1:5173` and proxies `/api` to `http://127.0.0.1:8000`.
+
+## API Endpoints
+
+- `GET /api/sessions`
+- `GET /api/sessions/{session_id}/summary`
+- `GET /api/sessions/{session_id}/pages`
+- `GET /api/sessions/{session_id}/pages/{page_id}`
+- `GET /api/sessions/{session_id}/exports.csv`
+- `GET /api/sessions/{session_id}/exports.json`
+
+## Legacy Streamlit
+
+The old Streamlit dashboard is still present at `dashboard.py` for reference, but the default UI path is now API + React.
 
 ## Output
 
@@ -96,4 +116,4 @@ The `uv` commands above are identical on PowerShell, CMD, macOS, and Linux shell
 - `playwright` errors: run `uv run playwright install chromium`
 - LLM auth/provider issues: verify `.env` values and `LLM_PROVIDER`
 - Empty crawl: check `robots.txt` behavior or your `start_urls`
-- Dashboard can’t find data: run a crawl first and verify files under `reports/`
+- Backend can’t find data: run a crawl first and verify files under `reports/`

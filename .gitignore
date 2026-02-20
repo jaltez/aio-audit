@@ -8,3 +8,5 @@ __pycache__/
 output.json
 reports/
 *.egg-info/
+frontend/node_modules/
+frontend/dist/

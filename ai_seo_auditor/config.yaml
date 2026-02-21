@@ -1,11 +1,41 @@
 audit:
+  # List of URLs to start crawling from
   start_urls:
     - https://books.toscrape.com/
+
+  # Maximum link-follow depth from start URLs (0 = start pages only)
   max_depth: 2
+
+  # Maximum number of pages to audit per crawl session
   max_pages: 10
+
+  # LLM request timeout in seconds
   llm_timeout_seconds: 60
-  llm_retry_attempts: 2
+
+  # Number of retry attempts after a failed LLM request
+  llm_retry_attempts: 3
+
+  # Base delay (seconds) for exponential backoff between retries
+  llm_retry_base_delay: 5.0
+
+  # Minimum seconds to wait between consecutive LLM calls (rate-limit padding)
+  # llm_rate_limit_delay: 6.0
+
   # Maximum characters of cleaned HTML sent to the LLM
   html_max_chars: 8000
+
   # Maximum characters of extracted text sent to the LLM
   text_max_chars: 2000
+
+  # ---------------------------------------------------------------------------
+  # Score weights for computing the overall page/site grade (must sum to 1.0)
+  # ---------------------------------------------------------------------------
+  score_weights:
+    onpage_seo: 0.20
+    schema_analysis: 0.10
+    content_analysis: 0.15
+    link_analysis: 0.15
+    performance: 0.10
+    readability: 0.10
+    security: 0.10
+    accessibility: 0.10

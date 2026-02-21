@@ -2,6 +2,8 @@
 
 Automated SEO and AI-readiness auditing with Scrapy + Playwright + LLM scoring, plus a custom React + FastAPI command center.
 
+![AI SEO Auditor](assets/screenshot.png)
+
 ## What it does
 
 - Crawls pages and extracts deterministic technical signals.

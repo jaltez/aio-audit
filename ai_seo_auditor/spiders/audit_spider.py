@@ -152,6 +152,7 @@ class AuditSpider(scrapy.Spider):
         self._pages_lock = asyncio.Lock()
         self._llm_semaphore = asyncio.Semaphore(1)  # serialize LLM calls
         self._last_llm_call: float = 0.0  # monotonic timestamp of last LLM call
+        self._stop_requested: bool = False
 
         # Initialize start_urls
         self.start_urls = audit_config.get('start_urls', ["https://books.toscrape.com/"])
@@ -182,7 +183,13 @@ class AuditSpider(scrapy.Spider):
     async def parse(self, response: TextResponse) -> AsyncGenerator[dict, None]:
         async with self._pages_lock:
             if self.pages_analyzed >= self.max_pages:
-                self.logger.info(f"Max pages limit ({self.max_pages}) reached. Stopping audit for {response.url} and future pages.")
+                if not self._stop_requested:
+                    self._stop_requested = True
+                    self.logger.info(
+                        f"Max pages limit ({self.max_pages}) reached. Stopping crawl at {response.url}."
+                    )
+                    if self.crawler and self.crawler.engine:
+                        self.crawler.engine.close_spider(self, reason="max_pages_reached")
                 return
             self.pages_analyzed += 1
             current_page = self.pages_analyzed
